@@ -3,6 +3,17 @@ name = "digest_auth"
 version = "0.1.0"
 authors = ["Ondřej Hruška <ondra@ondrovo.com>"]
 edition = "2018"
+description = "Implementation of the Digest Auth algorithm as defined in IETF RFC 2069, 2617, and 7616, intended for HTTP clients"
+repository = "https://git.ondrovo.com/packages/digest_auth_rs"
+readme = "README.md"
+keywords = ["http", "auth", "digest"]
+categories = [
+    "authentication",
+    "cryptography",
+    "web-programming::http-client"
+]
+license = "MIT"
+maintenance = { status = "actively-developed" }
 
 [dependencies]
 rust-crypto = "0.2"
