@@ -27,8 +27,8 @@ pub enum AlgorithmType {
 /// Algorithm and the -sess flag pair
 #[derive(Debug, PartialEq)]
 pub struct Algorithm {
-    algo: AlgorithmType,
-    sess: bool,
+    pub algo: AlgorithmType,
+    pub sess: bool,
 }
 
 impl Algorithm {
@@ -221,18 +221,18 @@ impl Display for HttpMethod {
 #[derive(Debug)]
 pub struct AuthContext<'a> {
     /// Login username
-    username: &'a str,
+    pub username: &'a str,
     /// Login password (plain)
-    password: &'a str,
+    pub password: &'a str,
     /// Requested URI (not a domain! should start with a slash)
-    uri: &'a str,
+    pub uri: &'a str,
     /// Request payload body - used for auth-int (auth with integrity check)
     /// May be left out if not using auth-int
-    body: Option<&'a [u8]>,
+    pub body: Option<&'a [u8]>,
     /// HTTP method used (defaults to GET)
-    method: HttpMethod,
+    pub method: HttpMethod,
     /// Spoofed client nonce (use only for tests; a random nonce is generated automatically)
-    cnonce: Option<&'a str>,
+    pub cnonce: Option<&'a str>,
 }
 
 impl<'a> AuthContext<'a> {

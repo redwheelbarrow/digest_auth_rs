@@ -1,6 +1,6 @@
 [package]
 name = "digest_auth"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Ondřej Hruška <ondra@ondrovo.com>"]
 edition = "2018"
 description = "Implementation of the Digest Auth algorithm as defined in IETF RFC 2069, 2617, and 7616, intended for HTTP clients"
