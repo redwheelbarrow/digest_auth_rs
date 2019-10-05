@@ -42,19 +42,19 @@
 //! assert_eq!(answer2, r#"Digest username="Mufasa", realm="http-auth@example.org", nonce="7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v", uri="/dir/index.html", qop=auth, nc=00000002, cnonce="f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ", response="4b5d595ecf2db9df612ea5b45cd97101", opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS", algorithm=MD5"#);
 //! ```
 
-#[macro_use] extern crate failure;
-use failure::Fallible;
-
 mod digest;
-mod utils;
+mod enums;
+mod error;
 
-pub use crate::digest::{
-    Algorithm, AuthContext, AuthorizationHeader, HttpMethod, Qop, WwwAuthenticateHeader,
-};
+pub use error::{Error, Result};
+
+pub use crate::digest::{AuthContext, AuthorizationHeader, WwwAuthenticateHeader};
+
+pub use crate::enums::*;
 
 /// Parse the WWW-Authorization header value.
 /// It's just a convenience method to call [`WwwAuthenticateHeader::parse()`](struct.WwwAuthenticateHeader.html#method.parse).
-pub fn parse(www_authorize : &str) -> Fallible<WwwAuthenticateHeader> {
+pub fn parse(www_authorize: &str) -> Result<WwwAuthenticateHeader> {
     WwwAuthenticateHeader::parse(www_authorize)
 }
 
@@ -91,6 +91,6 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=MD5
 "#
-            .trim()
+        .trim()
     );
 }

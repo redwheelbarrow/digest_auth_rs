@@ -1,218 +1,28 @@
-use crate::utils::QuoteForDigest;
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::str::FromStr;
-use failure::{Error,Fallible};
-
-use crypto::{
-    digest::Digest,
-    md5::Md5,
-    sha2::Sha256,
-    sha2::Sha512Trunc256
-};
-
 use rand::Rng;
+use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter};
+use std::str::FromStr;
 
-//region Algorithm
+use crate::enums::{Algorithm, AlgorithmType, Charset, HttpMethod, Qop, QopAlgo};
 
-/// Algorithm type
-#[derive(Debug, PartialEq)]
-#[allow(non_camel_case_types)]
-pub enum AlgorithmType {
-    MD5,
-    SHA2_256,
-    SHA2_512_256,
+use crate::{Error::*, Result};
+
+/// slash quoting for digest strings
+trait QuoteForDigest {
+    fn quote_for_digest(&self) -> String;
 }
 
-/// Algorithm and the -sess flag pair
-#[derive(Debug, PartialEq)]
-pub struct Algorithm {
-    pub algo: AlgorithmType,
-    pub sess: bool,
-}
-
-impl Algorithm {
-    /// Compose from algorithm type and the -sess flag
-    pub fn new(algo: AlgorithmType, sess: bool) -> Algorithm {
-        Algorithm { algo, sess }
-    }
-
-    /// Calculate a hash of bytes using the selected algorithm
-    pub fn hash(&self, bytes: &[u8]) -> String {
-        let mut hash: Box<dyn Digest> = match self.algo {
-            AlgorithmType::MD5 => Box::new(Md5::new()),
-            AlgorithmType::SHA2_256 => Box::new(Sha256::new()),
-            AlgorithmType::SHA2_512_256 => Box::new(Sha512Trunc256::new()),
-        };
-
-        hash.input(bytes);
-        hash.result_str()
-    }
-
-    /// Calculate a hash of string's bytes using the selected algorithm
-    pub fn hash_str(&self, bytes: &str) -> String {
-        self.hash(bytes.as_bytes())
+impl QuoteForDigest for &str {
+    fn quote_for_digest(&self) -> String {
+        self.to_string().quote_for_digest()
     }
 }
 
-impl FromStr for Algorithm {
-    type Err = Error;
-
-    /// Parse from the format used in WWW-Authorization
-    fn from_str(s: &str) -> Fallible<Self> {
-        match s {
-            "MD5" => Ok(Algorithm::new(AlgorithmType::MD5, false)),
-            "MD5-sess" => Ok(Algorithm::new(AlgorithmType::MD5, true)),
-            "SHA-256" => Ok(Algorithm::new(AlgorithmType::SHA2_256, false)),
-            "SHA-256-sess" => Ok(Algorithm::new(AlgorithmType::SHA2_256, true)),
-            "SHA-512-256" => Ok(Algorithm::new(AlgorithmType::SHA2_512_256, false)),
-            "SHA-512-256-sess" => Ok(Algorithm::new(AlgorithmType::SHA2_512_256, true)),
-            _ => Err(format_err!("Unknown algorithm: {}", s)),
-        }
+impl QuoteForDigest for String {
+    fn quote_for_digest(&self) -> String {
+        self.replace("\\", "\\\\").replace("\"", "\\\"")
     }
 }
-
-impl Default for Algorithm {
-    /// Get a MD5 instance
-    fn default() -> Self {
-        Algorithm::new(AlgorithmType::MD5, false)
-    }
-}
-
-impl Display for Algorithm {
-    /// Format to the form used in HTTP headers
-    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
-        f.write_str(match self.algo {
-            AlgorithmType::MD5 => "MD5",
-            AlgorithmType::SHA2_256 => "SHA-256",
-            AlgorithmType::SHA2_512_256 => "SHA-512-256",
-        })?;
-
-        if self.sess {
-            f.write_str("-sess")?;
-        }
-
-        Ok(())
-    }
-}
-
-//endregion
-
-//region Qop
-
-/// QOP field values
-#[derive(Debug, PartialEq)]
-#[allow(non_camel_case_types)]
-pub enum Qop {
-    /// QOP field not set by server
-    AUTH,
-    AUTH_INT,
-}
-
-impl FromStr for Qop {
-    type Err = Error;
-
-    /// Parse from "auth" or "auth-int" as used in HTTP headers
-    fn from_str(s: &str) -> Fallible<Self> {
-        match s {
-            "auth" => Ok(Qop::AUTH),
-            "auth-int" => Ok(Qop::AUTH_INT),
-            _ => Err(format_err!("Unknown QOP value: {}", s)),
-        }
-    }
-}
-
-impl Display for Qop {
-    /// Convert to "auth" or "auth-int" as used in HTTP headers
-    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
-        f.write_str(match self {
-            Qop::AUTH => "auth",
-            Qop::AUTH_INT => "auth-int",
-        })?;
-
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-#[allow(non_camel_case_types)]
-enum QopAlgo<'a> {
-    NONE,
-    AUTH,
-    AUTH_INT(&'a [u8]),
-}
-
-// casting back...
-impl<'a> Into<Option<Qop>> for QopAlgo<'a> {
-    /// Convert to ?Qop
-    fn into(self) -> Option<Qop> {
-        match self {
-            QopAlgo::NONE => None,
-            QopAlgo::AUTH => Some(Qop::AUTH),
-            QopAlgo::AUTH_INT(_) => Some(Qop::AUTH_INT),
-        }
-    }
-}
-
-//endregion
-
-//region Charset
-
-/// Charset field value as specified by the server
-#[derive(Debug, PartialEq)]
-pub enum Charset {
-    ASCII,
-    UTF8,
-}
-
-impl FromStr for Charset {
-    type Err = Error;
-
-    /// Parse from string (only UTF-8 supported, as prescribed by the specification)
-    fn from_str(s: &str) -> Fallible<Self> {
-        match s {
-            "UTF-8" => Ok(Charset::UTF8),
-            _ => Err(format_err!("Unknown charset value: {}", s)),
-        }
-    }
-}
-
-//endregion
-
-//region HttpMethod
-
-/// HTTP method (used when generating the response hash for some Qop options)
-#[derive(Debug)]
-pub enum HttpMethod {
-    GET,
-    POST,
-    HEAD,
-    OTHER(&'static str),
-}
-
-impl Default for HttpMethod {
-    fn default() -> Self {
-        HttpMethod::GET
-    }
-}
-
-impl Display for HttpMethod {
-    /// Convert to uppercase string
-    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
-        f.write_str(match self {
-            HttpMethod::GET => "GET",
-            HttpMethod::POST => "POST",
-            HttpMethod::HEAD => "HEAD",
-            HttpMethod::OTHER(s) => s,
-        })?;
-
-        Ok(())
-    }
-}
-
-//endregion
-
-//region AuthContext
 
 /// Login attempt context
 ///
@@ -238,28 +48,28 @@ pub struct AuthContext<'a> {
 impl<'a> AuthContext<'a> {
     /// Construct a new context with the GET verb and no payload body.
     /// See the other constructors if this does not fit your situation.
-    pub fn new<'n:'a, 'p:'a, 'u:'a>(username : &'n str, password : &'p str, uri : &'u str) -> Self {
+    pub fn new<'n: 'a, 'p: 'a, 'u: 'a>(username: &'n str, password: &'p str, uri: &'u str) -> Self {
         Self::new_with_method(username, password, uri, None, HttpMethod::GET)
     }
 
     /// Construct a new context with the POST verb and a payload body (may be None).
     /// See the other constructors if this does not fit your situation.
-    pub fn new_post<'n:'a, 'p:'a, 'u:'a, 'b:'a>(
-        username : &'n str,
-        password : &'p str,
-        uri : &'u str,
-        body : Option<&'b [u8]>
+    pub fn new_post<'n: 'a, 'p: 'a, 'u: 'a, 'b: 'a>(
+        username: &'n str,
+        password: &'p str,
+        uri: &'u str,
+        body: Option<&'b [u8]>,
     ) -> Self {
         Self::new_with_method(username, password, uri, body, HttpMethod::POST)
     }
 
     /// Construct a new context with arbitrary verb and, optionally, a payload body
-    pub fn new_with_method<'n:'a, 'p:'a, 'u:'a, 'b:'a>(
-        username : &'n str,
-        password : &'p str,
-        uri : &'u str,
-        body : Option<&'b [u8]>,
-        method : HttpMethod
+    pub fn new_with_method<'n: 'a, 'p: 'a, 'u: 'a, 'b: 'a>(
+        username: &'n str,
+        password: &'p str,
+        uri: &'u str,
+        body: Option<&'b [u8]>,
+        method: HttpMethod,
     ) -> Self {
         Self {
             username,
@@ -267,18 +77,15 @@ impl<'a> AuthContext<'a> {
             uri,
             body,
             method,
-            cnonce: None
+            cnonce: None,
         }
     }
 
-    pub fn set_custom_cnonce<'x:'a>(&mut self, cnonce : &'x str) {
+    /// Set cnonce to the given value
+    pub fn set_custom_cnonce<'x: 'a>(&mut self, cnonce: &'x str) {
         self.cnonce = Some(cnonce);
     }
 }
-
-//endregion
-
-//region WwwAuthenticateHeader
 
 /// WWW-Authenticate header parsed from HTTP header value
 #[derive(Debug, PartialEq)]
@@ -308,10 +115,22 @@ pub struct WwwAuthenticateHeader {
     pub nc: u32,
 }
 
+impl FromStr for WwwAuthenticateHeader {
+    type Err = crate::Error;
+
+    /// Parse HTTP header
+    fn from_str(input: &str) -> Result<Self> {
+        Self::parse(input)
+    }
+}
+
 impl WwwAuthenticateHeader {
     /// Generate an [`AuthorizationHeader`](struct.AuthorizationHeader.html) to be sent to the server in a new request.
     /// The [`self.nc`](struct.AuthorizationHeader.html#structfield.nc) field is incremented.
-    pub fn respond<'re, 'a:'re, 'c:'re>(&'a mut self, secrets : &'c AuthContext) -> Fallible<AuthorizationHeader<'re>> {
+    pub fn respond<'re, 'a: 're, 'c: 're>(
+        &'a mut self,
+        secrets: &'c AuthContext,
+    ) -> Result<AuthorizationHeader<'re>> {
         AuthorizationHeader::from_prompt(self, secrets)
     }
 
@@ -319,8 +138,10 @@ impl WwwAuthenticateHeader {
     ///
     /// # Errors
     /// If the header is malformed (e.g. missing 'realm', missing a closing quote, unknown algorithm etc.)
-    pub fn parse(input: &str) -> Fallible<Self> {
+    pub fn parse(input: &str) -> Result<Self> {
         let mut input = input.trim();
+
+        // Remove leading "Digest"
         if input.starts_with("Digest") {
             input = &input["Digest".len()..];
         }
@@ -343,11 +164,11 @@ impl WwwAuthenticateHeader {
             },
             realm: match kv.remove("realm") {
                 Some(v) => v,
-                None => bail!("realm not given"),
+                None => return Err(MissingRealm(input.into())),
             },
             nonce: match kv.remove("nonce") {
                 Some(v) => v,
-                None => bail!("nonce not given"),
+                None => return Err(MissingNonce(input.into())),
             },
             opaque: kv.remove("opaque"),
             stale: match kv.get("stale") {
@@ -373,13 +194,13 @@ impl WwwAuthenticateHeader {
                 Some(v) => &v.to_ascii_lowercase() == "true",
                 None => false,
             },
-            nc : 0
+            nc: 0,
         })
     }
 }
 
 /// Helper func that parses the key-value string received from server
-pub fn parse_header_map(input: &str) -> Fallible<HashMap<String, String>> {
+fn parse_header_map(input: &str) -> Result<HashMap<String, String>> {
     #[derive(Debug)]
     #[allow(non_camel_case_types)]
     enum ParserState {
@@ -462,28 +283,17 @@ pub fn parse_header_map(input: &str) -> Fallible<HashMap<String, String>> {
             parsed.insert(current_token.unwrap().to_string(), current_value); // consume the value here
         }
         ParserState::P_WHITE => {}
-        _ => bail!("Unexpected end state {:?}", state),
+        _ => return Err(InvalidHeaderSyntax(input.into())),
     }
 
     Ok(parsed)
 }
 
-impl FromStr for WwwAuthenticateHeader {
-    type Err = Error;
-
-    /// Parse HTTP header
-    fn from_str(input: &str) -> Fallible<Self> {
-        Self::parse(input)
-    }
-}
-
-//endregion
-
-//region AuthorizationHeader
-
 /// Header sent back to the server, including password hashes.
 ///
-/// This can be obtained by calling [`AuthorizationHeader::from_prompt()`](#method.from_prompt), or from the [`WwwAuthenticateHeader`](struct.WwwAuthenticateHeader.html) prompt struct with [`.respond()`](struct.WwwAuthenticateHeader.html#method.respond)
+/// This can be obtained by calling [`AuthorizationHeader::from_prompt()`](#method.from_prompt),
+/// or from the [`WwwAuthenticateHeader`](struct.WwwAuthenticateHeader.html) prompt struct
+/// with [`.respond()`](struct.WwwAuthenticateHeader.html#method.respond)
 #[derive(Debug)]
 pub struct AuthorizationHeader<'ctx> {
     /// The server header that triggered the authentication flow; used to retrieve some additional
@@ -519,9 +329,10 @@ impl<'a> AuthorizationHeader<'a> {
     ///
     /// Fails if the source header is malformed so much that we can't figure out
     /// a proper response (e.g. given but invalid QOP options)
-    pub fn from_prompt<'p:'a, 's:'a>(
-        prompt: &'p mut WwwAuthenticateHeader, context: &'s AuthContext
-    ) -> Fallible<AuthorizationHeader<'a>> {
+    pub fn from_prompt<'p: 'a, 's: 'a>(
+        prompt: &'p mut WwwAuthenticateHeader,
+        context: &'s AuthContext,
+    ) -> Result<AuthorizationHeader<'a>> {
         // figure out which QOP option to use
         let empty_vec = vec![];
         let qop_algo = match &prompt.qop {
@@ -544,7 +355,12 @@ impl<'a> AuthorizationHeader<'a> {
                     QopAlgo::AUTH
                 } else {
                     // parser bug - prompt.qop should have been None
-                    bail!("Bad QOP options - {:#?}", vec);
+                    return Err(BadQopOptions(
+                        vec.iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<String>>()
+                            .join(","),
+                    ));
                 }
             }
         };
@@ -604,13 +420,14 @@ impl<'a> AuthorizationHeader<'a> {
                     "{username}:{realm}",
                     username = context.username,
                     realm = prompt.realm
-                ).as_bytes()
+                )
+                .as_bytes(),
             )
         } else {
             context.username.to_owned()
         };
 
-        let qop : Option<Qop> = qop_algo.into();
+        let qop: Option<Qop> = qop_algo.into();
 
         let ha1 = h.hash_str(&a1);
         let ha2 = h.hash_str(&a2);
@@ -662,7 +479,7 @@ impl<'a> AuthorizationHeader<'a> {
 }
 
 impl<'a> Display for AuthorizationHeader<'a> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str("Digest ")?;
 
         //TODO charset shenanigans with username* (UTF-8 charset)
@@ -714,21 +531,17 @@ impl<'a> Display for AuthorizationHeader<'a> {
     }
 }
 
-//endregion
-
-//region TESTS
-
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-    use super::WwwAuthenticateHeader;
-    use super::AuthorizationHeader;
+    use super::parse_header_map;
     use super::Algorithm;
+    use super::AlgorithmType;
+    use super::AuthorizationHeader;
     use super::Charset;
     use super::Qop;
-    use super::AlgorithmType;
-    use super::parse_header_map;
+    use super::WwwAuthenticateHeader;
     use crate::digest::AuthContext;
+    use std::str::FromStr;
 
     #[test]
     fn test_parse_header_map() {
@@ -812,7 +625,7 @@ mod tests {
                     qop: Some(vec![Qop::AUTH]),
                     userhash: true,
                     charset: Charset::UTF8,
-                    nc: 0
+                    nc: 0,
                 }
             )
         }
@@ -840,7 +653,7 @@ mod tests {
                     qop: Some(vec![Qop::AUTH_INT]),
                     userhash: false,
                     charset: Charset::ASCII,
-                    nc: 0
+                    nc: 0,
                 }
             )
         }
@@ -863,7 +676,7 @@ mod tests {
                     qop: None,
                     userhash: false,
                     charset: Charset::ASCII,
-                    nc: 0
+                    nc: 0,
                 }
             )
         }
@@ -895,7 +708,7 @@ Digest username="Mufasa",
   response="1949323746fe6a43ef61f9606e7febea",
   opaque="5ccc069c403ebaf9f0171e9517f40e41"
 "#
-                .trim()
+            .trim()
         );
     }
 
@@ -932,7 +745,7 @@ Digest username="Mufasa",
   opaque="5ccc069c403ebaf9f0171e9517f40e41",
   algorithm=MD5
 "#
-                .trim()
+            .trim()
         );
     }
 
@@ -969,7 +782,7 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=MD5
 "#
-                .trim()
+            .trim()
         );
     }
 
@@ -986,16 +799,16 @@ Digest username="Mufasa",
 
         let mut context = AuthContext::new("Mufasa", "Circle of Life", "/dir/index.html");
         context.set_custom_cnonce("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ");
-//
-//    let secrets = AuthSecrets {
-//        username: "Mufasa".to_string(),
-//        password: "Circle of Life".to_string(),
-//        uri: "/dir/index.html".to_string(),
-//        body: None,
-//        method: HttpMethod::GET,
-//        nc: 1,
-//        cnonce: Some("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ".to_string()),
-//    };
+        //
+        //    let secrets = AuthSecrets {
+        //        username: "Mufasa".to_string(),
+        //        password: "Circle of Life".to_string(),
+        //        uri: "/dir/index.html".to_string(),
+        //        body: None,
+        //        method: HttpMethod::GET,
+        //        nc: 1,
+        //        cnonce: Some("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ".to_string()),
+        //    };
 
         let mut prompt = WwwAuthenticateHeader::from_str(src).unwrap();
         let answer = AuthorizationHeader::from_prompt(&mut prompt, &context).unwrap();
@@ -1017,9 +830,7 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=SHA-256
 "#
-                .trim()
+            .trim()
         );
     }
 }
-
-//endregion
