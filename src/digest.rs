@@ -6,6 +6,7 @@ use std::str::FromStr;
 use crate::enums::{Algorithm, AlgorithmType, Charset, HttpMethod, Qop, QopAlgo};
 
 use crate::{Error::*, Result};
+use std::borrow::Cow;
 
 /// slash quoting for digest strings
 trait QuoteForDigest {
@@ -18,9 +19,41 @@ impl QuoteForDigest for &str {
     }
 }
 
+impl<'a> QuoteForDigest for Cow<'a, str> {
+    fn quote_for_digest(&self) -> String {
+        self.as_ref().quote_for_digest()
+    }
+}
+
 impl QuoteForDigest for String {
     fn quote_for_digest(&self) -> String {
         self.replace("\\", "\\\\").replace("\"", "\\\"")
+    }
+}
+
+/// Join a Vec of Display items using a separator
+fn join_vec<T : ToString>(vec : &Vec<T>, sep : &str) -> String {
+    vec.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(sep)
+}
+
+enum NamedTag<'a> {
+    Quoted(&'a str, Cow<'a, str>),
+    Plain(&'a str, Cow<'a, str>)
+}
+
+impl Display for NamedTag<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            NamedTag::Quoted(name, content) => {
+                write!(f, "{}=\"{}\"", name, content.quote_for_digest())
+            }
+            NamedTag::Plain(name, content) => {
+                write!(f, "{}={}", name, content)
+            }
+        }
     }
 }
 
@@ -199,6 +232,48 @@ impl WwwAuthenticateHeader {
     }
 }
 
+impl Display for WwwAuthenticateHeader {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut entries = Vec::<NamedTag>::new();
+
+        f.write_str("Digest ")?;
+
+        entries.push(NamedTag::Quoted("realm", (&self.realm).into()));
+
+        if let Some(ref qops) = self.qop {
+            entries.push(NamedTag::Quoted("qop", join_vec(qops, ", ").into()));
+        }
+
+        if let Some(ref domains) = self.domain {
+            entries.push(NamedTag::Quoted("domain", join_vec(domains, " ").into()));
+        }
+
+        if self.stale {
+            entries.push(NamedTag::Plain("stale", "true".into()));
+        }
+
+        entries.push(NamedTag::Plain("algorithm", self.algorithm.to_string().into()));
+        entries.push(NamedTag::Quoted("nonce", (&self.nonce).into()));
+        if let Some(ref opaque) = self.opaque {
+            entries.push(NamedTag::Quoted("opaque", (opaque).into()));
+        }
+        entries.push(NamedTag::Plain("charset", self.charset.to_string().into()));
+
+        if self.userhash {
+            entries.push(NamedTag::Plain("userhash", "true".into()));
+        }
+
+        for (i, e) in entries.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            f.write_str(&e.to_string())?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Helper func that parses the key-value string received from server
 fn parse_header_map(input: &str) -> Result<HashMap<String, String>> {
     #[derive(Debug)]
@@ -355,12 +430,7 @@ impl<'a> AuthorizationHeader<'a> {
                     QopAlgo::AUTH
                 } else {
                     // parser bug - prompt.qop should have been None
-                    return Err(BadQopOptions(
-                        vec.iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<String>>()
-                            .join(","),
-                    ));
+                    return Err(BadQopOptions(join_vec(vec, ", ")));
                 }
             }
         };
@@ -421,7 +491,7 @@ impl<'a> AuthorizationHeader<'a> {
                     username = context.username,
                     realm = prompt.realm
                 )
-                .as_bytes(),
+                    .as_bytes(),
             )
         } else {
             context.username.to_owned()
@@ -483,44 +553,29 @@ impl<'a> Display for AuthorizationHeader<'a> {
         f.write_str("Digest ")?;
 
         //TODO charset shenanigans with username* (UTF-8 charset)
-        f.write_fmt(format_args!(
-            "username=\"{}\"",
-            self.username.quote_for_digest()
-        ))?;
-
-        f.write_fmt(format_args!(
-            ", realm=\"{}\"",
-            self.prompt.realm.quote_for_digest()
-        ))?;
-
-        f.write_fmt(format_args!(
-            ", nonce=\"{}\"",
-            self.prompt.nonce.quote_for_digest()
-        ))?;
-
-        f.write_fmt(format_args!(", uri=\"{}\"", self.uri))?;
+        write!(f, "username=\"{uname}\", realm=\"{realm}\", nonce=\"{nonce}\", uri=\"{uri}\"",
+               uname = self.username.quote_for_digest(),
+               realm = self.prompt.realm.quote_for_digest(),
+               nonce = self.prompt.nonce.quote_for_digest(),
+               uri = self.uri)?;
 
         if self.prompt.qop.is_some() && self.cnonce.is_some() {
-            f.write_fmt(format_args!(
-                ", qop={qop}, nc={nc:08x}, cnonce=\"{cnonce}\"",
-                qop = self.qop.as_ref().unwrap(),
-                cnonce = self.cnonce.as_ref().unwrap().quote_for_digest(),
-                nc = self.nc
-            ))?;
+            write!(f, ", qop={qop}, nc={nc:08x}, cnonce=\"{cnonce}\"",
+                   qop = self.qop.as_ref().unwrap(),
+                   nc = self.nc,
+                   cnonce = self.cnonce.as_ref().unwrap().quote_for_digest(),
+            )?;
         }
 
-        f.write_fmt(format_args!(
-            ", response=\"{}\"",
-            self.response.quote_for_digest()
-        ))?;
+        write!(f, ", response=\"{}\"", self.response.quote_for_digest())?;
 
         if let Some(opaque) = &self.prompt.opaque {
-            f.write_fmt(format_args!(", opaque=\"{}\"", opaque.quote_for_digest()))?;
+            write!(f, ", opaque=\"{}\"", opaque.quote_for_digest())?;
         }
 
         // algorithm can be omitted if it is the default value (or in legacy compat mode)
         if self.qop.is_some() || self.prompt.algorithm.algo != AlgorithmType::MD5 {
-            f.write_fmt(format_args!(", algorithm={}", self.prompt.algorithm))?;
+            write!(f, ", algorithm={}", self.prompt.algorithm)?;
         }
 
         if self.prompt.userhash {
@@ -545,8 +600,7 @@ mod tests {
 
     #[test]
     fn test_parse_header_map() {
-        {
-            let src = r#"
+        let src = r#"
            realm="api@example.org",
            qop="auth",
            algorithm=SHA-512-256,
@@ -556,35 +610,40 @@ mod tests {
            userhash=true
         "#;
 
-            let map = parse_header_map(src).unwrap();
+        let map = parse_header_map(src).unwrap();
 
-            assert_eq!(map.get("realm").unwrap(), "api@example.org");
-            assert_eq!(map.get("qop").unwrap(), "auth");
-            assert_eq!(map.get("algorithm").unwrap(), "SHA-512-256");
-            assert_eq!(
-                map.get("nonce").unwrap(),
-                "5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK"
-            );
-            assert_eq!(
-                map.get("opaque").unwrap(),
-                "HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS"
-            );
-            assert_eq!(map.get("charset").unwrap(), "UTF-8");
-            assert_eq!(map.get("userhash").unwrap(), "true");
-        }
+        assert_eq!(map.get("realm").unwrap(), "api@example.org");
+        assert_eq!(map.get("qop").unwrap(), "auth");
+        assert_eq!(map.get("algorithm").unwrap(), "SHA-512-256");
+        assert_eq!(
+            map.get("nonce").unwrap(),
+            "5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK"
+        );
+        assert_eq!(
+            map.get("opaque").unwrap(),
+            "HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS"
+        );
+        assert_eq!(map.get("charset").unwrap(), "UTF-8");
+        assert_eq!(map.get("userhash").unwrap(), "true");
+    }
 
-        {
-            let src = r#"realm="api@example.org""#;
-            let map = parse_header_map(src).unwrap();
-            assert_eq!(map.get("realm").unwrap(), "api@example.org");
-        }
+    #[test]
+    fn test_parse_header_map2()
+    {
+        let src = r#"realm="api@example.org""#;
+        let map = parse_header_map(src).unwrap();
+        assert_eq!(map.get("realm").unwrap(), "api@example.org");
+    }
 
-        {
-            let src = r#"realm=api@example.org"#;
-            let map = parse_header_map(src).unwrap();
-            assert_eq!(map.get("realm").unwrap(), "api@example.org");
-        }
+    #[test]
+    fn test_parse_header_map3() {
+        let src = r#"realm=api@example.org"#;
+        let map = parse_header_map(src).unwrap();
+        assert_eq!(map.get("realm").unwrap(), "api@example.org");
+    }
 
+    #[test]
+    fn test_parse_header_map4() {
         {
             let src = "";
             let map = parse_header_map(src).unwrap();
@@ -594,12 +653,11 @@ mod tests {
 
     #[test]
     fn test_www_hdr_parse() {
-        {
-            // most things are parsed here...
-            let src = r#"
+        // most things are parsed here...
+        let src = r#"
                realm="api@example.org",
                qop="auth",
-               domain="/my/nice/url /login /logout"
+               domain="/my/nice/url /login /logout",
                algorithm=SHA-512-256,
                nonce="5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK",
                opaque="HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS",
@@ -607,79 +665,134 @@ mod tests {
                userhash=true
             "#;
 
-            let parsed = WwwAuthenticateHeader::from_str(src).unwrap();
+        let parsed = WwwAuthenticateHeader::from_str(src).unwrap();
 
-            assert_eq!(
-                parsed,
-                WwwAuthenticateHeader {
-                    domain: Some(vec![
-                        "/my/nice/url".to_string(),
-                        "/login".to_string(),
-                        "/logout".to_string(),
-                    ]),
-                    realm: "api@example.org".to_string(),
-                    nonce: "5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK".to_string(),
-                    opaque: Some("HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS".to_string()),
-                    stale: false,
-                    algorithm: Algorithm::new(AlgorithmType::SHA2_512_256, false),
-                    qop: Some(vec![Qop::AUTH]),
-                    userhash: true,
-                    charset: Charset::UTF8,
-                    nc: 0,
-                }
-            )
-        }
+        assert_eq!(
+            parsed,
+            WwwAuthenticateHeader {
+                domain: Some(vec![
+                    "/my/nice/url".to_string(),
+                    "/login".to_string(),
+                    "/logout".to_string(),
+                ]),
+                realm: "api@example.org".to_string(),
+                nonce: "5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK".to_string(),
+                opaque: Some("HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS".to_string()),
+                stale: false,
+                algorithm: Algorithm::new(AlgorithmType::SHA2_512_256, false),
+                qop: Some(vec![Qop::AUTH]),
+                userhash: true,
+                charset: Charset::UTF8,
+                nc: 0,
+            }
+        )
+    }
 
-        {
-            // verify some defaults
-            let src = r#"
-               realm="a long realm with\\, weird \" characters",
-               qop="auth-int",
-               nonce="bla bla nonce aaaaa",
-               stale=TRUE
-            "#;
+    #[test]
+    fn test_www_hdr_tostring() {
+        let mut hdr = WwwAuthenticateHeader {
+            domain: Some(vec![
+                "/my/nice/url".to_string(),
+                "/login".to_string(),
+                "/logout".to_string(),
+            ]),
+            realm: "api@example.org".to_string(),
+            nonce: "5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK".to_string(),
+            opaque: Some("HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS".to_string()),
+            stale: false,
+            algorithm: Algorithm::new(AlgorithmType::SHA2_512_256, false),
+            qop: Some(vec![Qop::AUTH]),
+            userhash: true,
+            charset: Charset::UTF8,
+            nc: 0,
+        };
 
-            let parsed = WwwAuthenticateHeader::from_str(src).unwrap();
+        assert_eq!(
+r#"Digest realm="api@example.org",
+  qop="auth",
+  domain="/my/nice/url /login /logout",
+  algorithm=SHA-512-256,
+  nonce="5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK",
+  opaque="HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS",
+  charset=UTF-8,
+  userhash=true"#.replace(",\n  ", ", "), hdr.to_string());
 
-            assert_eq!(
-                parsed,
-                WwwAuthenticateHeader {
-                    domain: None,
-                    realm: "a long realm with\\, weird \" characters".to_string(),
-                    nonce: "bla bla nonce aaaaa".to_string(),
-                    opaque: None,
-                    stale: true,
-                    algorithm: Algorithm::default(),
-                    qop: Some(vec![Qop::AUTH_INT]),
-                    userhash: false,
-                    charset: Charset::ASCII,
-                    nc: 0,
-                }
-            )
-        }
+        hdr.stale=true;
+        hdr.userhash=false;
+        hdr.opaque = None;
+        hdr.qop = None;
 
-        {
-            // check that it correctly ignores leading Digest
-            let src = r#"Digest realm="aaa", nonce="bbb""#;
+        assert_eq!(
+r#"Digest realm="api@example.org",
+  domain="/my/nice/url /login /logout",
+  stale=true,
+  algorithm=SHA-512-256,
+  nonce="5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK",
+  charset=UTF-8"#.replace(",\n  ", ", "), hdr.to_string());
 
-            let parsed = WwwAuthenticateHeader::from_str(src).unwrap();
+        hdr.qop = Some(vec![Qop::AUTH, Qop::AUTH_INT]);
 
-            assert_eq!(
-                parsed,
-                WwwAuthenticateHeader {
-                    domain: None,
-                    realm: "aaa".to_string(),
-                    nonce: "bbb".to_string(),
-                    opaque: None,
-                    stale: false,
-                    algorithm: Algorithm::default(),
-                    qop: None,
-                    userhash: false,
-                    charset: Charset::ASCII,
-                    nc: 0,
-                }
-            )
-        }
+        assert_eq!(
+r#"Digest realm="api@example.org",
+  qop="auth, auth-int",
+  domain="/my/nice/url /login /logout",
+  stale=true,
+  algorithm=SHA-512-256,
+  nonce="5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK",
+  charset=UTF-8"#.replace(",\n  ", ", "), hdr.to_string());
+    }
+
+    #[test]
+    fn test_www_hdr_parse2() {
+        // verify some defaults
+        let src = r#"
+           realm="a long realm with\\, weird \" characters",
+           qop="auth-int",
+           nonce="bla bla nonce aaaaa",
+           stale=TRUE
+        "#;
+
+        let parsed = WwwAuthenticateHeader::from_str(src).unwrap();
+
+        assert_eq!(
+            parsed,
+            WwwAuthenticateHeader {
+                domain: None,
+                realm: "a long realm with\\, weird \" characters".to_string(),
+                nonce: "bla bla nonce aaaaa".to_string(),
+                opaque: None,
+                stale: true,
+                algorithm: Algorithm::default(),
+                qop: Some(vec![Qop::AUTH_INT]),
+                userhash: false,
+                charset: Charset::ASCII,
+                nc: 0,
+            }
+        )
+    }
+
+    #[test]
+    fn test_www_hdr_parse3() {
+        // check that it correctly ignores leading Digest
+        let src = r#"Digest realm="aaa", nonce="bbb""#;
+
+        let parsed = WwwAuthenticateHeader::from_str(src).unwrap();
+
+        assert_eq!(
+            parsed,
+            WwwAuthenticateHeader {
+                domain: None,
+                realm: "aaa".to_string(),
+                nonce: "bbb".to_string(),
+                opaque: None,
+                stale: false,
+                algorithm: Algorithm::default(),
+                qop: None,
+                userhash: false,
+                charset: Charset::ASCII,
+                nc: 0,
+            }
+        )
     }
 
     #[test]
@@ -708,7 +821,7 @@ Digest username="Mufasa",
   response="1949323746fe6a43ef61f9606e7febea",
   opaque="5ccc069c403ebaf9f0171e9517f40e41"
 "#
-            .trim()
+                .trim()
         );
     }
 
@@ -745,7 +858,7 @@ Digest username="Mufasa",
   opaque="5ccc069c403ebaf9f0171e9517f40e41",
   algorithm=MD5
 "#
-            .trim()
+                .trim()
         );
     }
 
@@ -782,7 +895,7 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=MD5
 "#
-            .trim()
+                .trim()
         );
     }
 
@@ -830,7 +943,7 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=SHA-256
 "#
-            .trim()
+                .trim()
         );
     }
 }

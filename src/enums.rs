@@ -154,6 +154,15 @@ impl FromStr for Charset {
     }
 }
 
+impl Display for Charset {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Charset::ASCII => "ASCII",
+            Charset::UTF8 => "UTF-8",
+        })
+    }
+}
+
 /// HTTP method (used when generating the response hash for some Qop options)
 #[derive(Debug)]
 pub enum HttpMethod {
