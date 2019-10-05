@@ -250,7 +250,7 @@ impl<'a> AuthContext<'a> {
         uri : &'u str,
         body : Option<&'b [u8]>
     ) -> Self {
-        Self::new_with_method(username, password, uri, body, HttpMethod::GET)
+        Self::new_with_method(username, password, uri, body, HttpMethod::POST)
     }
 
     /// Construct a new context with arbitrary verb and, optionally, a payload body
