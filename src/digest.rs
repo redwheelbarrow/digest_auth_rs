@@ -39,7 +39,7 @@ impl Algorithm {
 
     /// Calculate a hash of bytes using the selected algorithm
     pub fn hash(&self, bytes: &[u8]) -> String {
-        let mut hash: Box<Digest> = match self.algo {
+        let mut hash: Box<dyn Digest> = match self.algo {
             AlgorithmType::MD5 => Box::new(Md5::new()),
             AlgorithmType::SHA2_256 => Box::new(Sha256::new()),
             AlgorithmType::SHA2_512_256 => Box::new(Sha512Trunc256::new()),
@@ -351,7 +351,7 @@ impl WwwAuthenticateHeader {
             },
             opaque: kv.remove("opaque"),
             stale: match kv.get("stale") {
-                Some(v) => v.to_ascii_lowercase() == "true",
+                Some(v) => &v.to_ascii_lowercase() == "true",
                 None => false,
             },
             charset: match kv.get("charset") {
@@ -370,7 +370,7 @@ impl WwwAuthenticateHeader {
                 None
             },
             userhash: match kv.get("userhash") {
-                Some(v) => v.to_ascii_lowercase() == "true",
+                Some(v) => &v.to_ascii_lowercase() == "true",
                 None => false,
             },
             nc : 0
