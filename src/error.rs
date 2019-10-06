@@ -6,10 +6,10 @@ pub enum Error {
     BadCharset(String),
     UnknownAlgorithm(String),
     BadQop(String),
-    MissingRealm(String),
-    MissingNonce(String),
+    MissingRequired(&'static str, String),
     InvalidHeaderSyntax(String),
     BadQopOptions(String),
+    NumParseError,
 }
 
 pub type Result<T> = result::Result<T, Error>;
@@ -22,10 +22,16 @@ impl Display for Error {
             BadCharset(ctx) => write!(f, "Bad charset: {}", ctx),
             UnknownAlgorithm(ctx) => write!(f, "Unknown algorithm: {}", ctx),
             BadQop(ctx) => write!(f, "Bad Qop option: {}", ctx),
-            MissingRealm(ctx) => write!(f, "Missing 'realm' in WWW-Authenticate: {}", ctx),
-            MissingNonce(ctx) => write!(f, "Missing 'nonce' in WWW-Authenticate: {}", ctx),
+            MissingRequired(what, ctx) => write!(f, "Missing \"{}\" in header: {}", what, ctx),
             InvalidHeaderSyntax(ctx) => write!(f, "Invalid header syntax: {}", ctx),
             BadQopOptions(ctx) => write!(f, "Illegal Qop in prompt: {}", ctx),
+            NumParseError => write!(f, "Error parsing a number."),
         }
+    }
+}
+
+impl From<std::num::ParseIntError> for Error {
+    fn from(_: std::num::ParseIntError) -> Self {
+        NumParseError
     }
 }

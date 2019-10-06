@@ -57,222 +57,6 @@ impl Display for NamedTag<'_> {
     }
 }
 
-/// Login attempt context
-///
-/// All fields are borrowed to reduce runtime overhead; this struct should not be stored anywhere,
-/// it is normally meaningful only for the one request.
-#[derive(Debug)]
-pub struct AuthContext<'a> {
-    /// Login username
-    pub username: &'a str,
-    /// Login password (plain)
-    pub password: &'a str,
-    /// Requested URI (not a domain! should start with a slash)
-    pub uri: &'a str,
-    /// Request payload body - used for auth-int (auth with integrity check)
-    /// May be left out if not using auth-int
-    pub body: Option<&'a [u8]>,
-    /// HTTP method used (defaults to GET)
-    pub method: HttpMethod,
-    /// Spoofed client nonce (use only for tests; a random nonce is generated automatically)
-    pub cnonce: Option<&'a str>,
-}
-
-impl<'a> AuthContext<'a> {
-    /// Construct a new context with the GET verb and no payload body.
-    /// See the other constructors if this does not fit your situation.
-    pub fn new<'n: 'a, 'p: 'a, 'u: 'a>(username: &'n str, password: &'p str, uri: &'u str) -> Self {
-        Self::new_with_method(username, password, uri, None, HttpMethod::GET)
-    }
-
-    /// Construct a new context with the POST verb and a payload body (may be None).
-    /// See the other constructors if this does not fit your situation.
-    pub fn new_post<'n: 'a, 'p: 'a, 'u: 'a, 'b: 'a>(
-        username: &'n str,
-        password: &'p str,
-        uri: &'u str,
-        body: Option<&'b [u8]>,
-    ) -> Self {
-        Self::new_with_method(username, password, uri, body, HttpMethod::POST)
-    }
-
-    /// Construct a new context with arbitrary verb and, optionally, a payload body
-    pub fn new_with_method<'n: 'a, 'p: 'a, 'u: 'a, 'b: 'a>(
-        username: &'n str,
-        password: &'p str,
-        uri: &'u str,
-        body: Option<&'b [u8]>,
-        method: HttpMethod,
-    ) -> Self {
-        Self {
-            username,
-            password,
-            uri,
-            body,
-            method,
-            cnonce: None,
-        }
-    }
-
-    /// Set cnonce to the given value
-    pub fn set_custom_cnonce<'x: 'a>(&mut self, cnonce: &'x str) {
-        self.cnonce = Some(cnonce);
-    }
-}
-
-/// WWW-Authenticate header parsed from HTTP header value
-#[derive(Debug, PartialEq)]
-pub struct WwwAuthenticateHeader {
-    /// Domain is a list of URIs that will accept the same digest. None if not given (i.e applies to all)
-    pub domain: Option<Vec<String>>,
-    /// Authorization realm (i.e. hostname, serial number...)
-    pub realm: String,
-    /// Server nonce
-    pub nonce: String,
-    /// Server opaque string
-    pub opaque: Option<String>,
-    /// True if the server nonce expired.
-    /// This is sent in response to an auth attempt with an older digest.
-    /// The response should contain a new WWW-Authenticate header.
-    pub stale: bool,
-    /// Hashing algo
-    pub algorithm: Algorithm,
-    /// Digest algorithm variant
-    pub qop: Option<Vec<Qop>>,
-    /// Flag that the server supports user-hashes
-    pub userhash: bool,
-    /// Server-supported charset
-    pub charset: Charset,
-    /// nc - not part of the received header, but kept here for convenience and incremented each time
-    /// a response is composed with the same nonce.
-    pub nc: u32,
-}
-
-impl FromStr for WwwAuthenticateHeader {
-    type Err = crate::Error;
-
-    /// Parse HTTP header
-    fn from_str(input: &str) -> Result<Self> {
-        Self::parse(input)
-    }
-}
-
-impl WwwAuthenticateHeader {
-    /// Generate an [`AuthorizationHeader`](struct.AuthorizationHeader.html) to be sent to the server in a new request.
-    /// The [`self.nc`](struct.AuthorizationHeader.html#structfield.nc) field is incremented.
-    pub fn respond<'re, 'a: 're, 'c: 're>(
-        &'a mut self,
-        secrets: &'c AuthContext,
-    ) -> Result<AuthorizationHeader<'re>> {
-        AuthorizationHeader::from_prompt(self, secrets)
-    }
-
-    /// Construct from the `WWW-Authenticate` header string
-    ///
-    /// # Errors
-    /// If the header is malformed (e.g. missing 'realm', missing a closing quote, unknown algorithm etc.)
-    pub fn parse(input: &str) -> Result<Self> {
-        let mut input = input.trim();
-
-        // Remove leading "Digest"
-        if input.starts_with("Digest") {
-            input = &input["Digest".len()..];
-        }
-
-        let mut kv = parse_header_map(input)?;
-
-        //println!("Parsed map: {:#?}", kv);
-
-        let algo = match kv.get("algorithm") {
-            Some(a) => Algorithm::from_str(&a)?,
-            _ => Algorithm::default(),
-        };
-
-        Ok(Self {
-            domain: if let Some(domains) = kv.get("domain") {
-                let domains: Vec<&str> = domains.split(' ').collect();
-                Some(domains.iter().map(|x| x.trim().to_string()).collect())
-            } else {
-                None
-            },
-            realm: match kv.remove("realm") {
-                Some(v) => v,
-                None => return Err(MissingRealm(input.into())),
-            },
-            nonce: match kv.remove("nonce") {
-                Some(v) => v,
-                None => return Err(MissingNonce(input.into())),
-            },
-            opaque: kv.remove("opaque"),
-            stale: match kv.get("stale") {
-                Some(v) => &v.to_ascii_lowercase() == "true",
-                None => false,
-            },
-            charset: match kv.get("charset") {
-                Some(v) => Charset::from_str(v)?,
-                None => Charset::ASCII,
-            },
-            algorithm: algo,
-            qop: if let Some(domains) = kv.get("qop") {
-                let domains: Vec<&str> = domains.split(',').collect();
-                let mut qops = vec![];
-                for d in domains {
-                    qops.push(Qop::from_str(d.trim())?);
-                }
-                Some(qops)
-            } else {
-                None
-            },
-            userhash: match kv.get("userhash") {
-                Some(v) => &v.to_ascii_lowercase() == "true",
-                None => false,
-            },
-            nc: 0,
-        })
-    }
-}
-
-impl Display for WwwAuthenticateHeader {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut entries = Vec::<NamedTag>::new();
-
-        f.write_str("Digest ")?;
-
-        entries.push(NamedTag::Quoted("realm", (&self.realm).into()));
-
-        if let Some(ref qops) = self.qop {
-            entries.push(NamedTag::Quoted("qop", join_vec(qops, ", ").into()));
-        }
-
-        if let Some(ref domains) = self.domain {
-            entries.push(NamedTag::Quoted("domain", join_vec(domains, " ").into()));
-        }
-
-        if self.stale {
-            entries.push(NamedTag::Plain("stale", "true".into()));
-        }
-
-        entries.push(NamedTag::Plain("algorithm", self.algorithm.to_string().into()));
-        entries.push(NamedTag::Quoted("nonce", (&self.nonce).into()));
-        if let Some(ref opaque) = self.opaque {
-            entries.push(NamedTag::Quoted("opaque", (opaque).into()));
-        }
-        entries.push(NamedTag::Plain("charset", self.charset.to_string().into()));
-
-        if self.userhash {
-            entries.push(NamedTag::Plain("userhash", "true".into()));
-        }
-
-        for (i, e) in entries.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            f.write_str(&e.to_string())?;
-        }
-
-        Ok(())
-    }
-}
 
 /// Helper func that parses the key-value string received from server
 fn parse_header_map(input: &str) -> Result<HashMap<String, String>> {
@@ -364,22 +148,258 @@ fn parse_header_map(input: &str) -> Result<HashMap<String, String>> {
     Ok(parsed)
 }
 
+
+/// Login attempt context
+///
+/// All fields are borrowed to reduce runtime overhead; this struct should not be stored anywhere,
+/// it is normally meaningful only for the one request.
+#[derive(Debug)]
+pub struct AuthContext<'a> {
+    /// Login username
+    pub username: Cow<'a, str>,
+    /// Login password (plain)
+    pub password: Cow<'a, str>,
+    /// Requested URI (not a domain! should start with a slash)
+    pub uri: Cow<'a, str>,
+    /// Request payload body - used for auth-int (auth with integrity check)
+    /// May be left out if not using auth-int
+    pub body: Option<Cow<'a, [u8]>>,
+    /// HTTP method used (defaults to GET)
+    pub method: HttpMethod,
+    /// Spoofed client nonce (use only for tests; a random nonce is generated automatically)
+    pub cnonce: Option<Cow<'a, str>>,
+}
+
+impl<'a> AuthContext<'a> {
+    /// Construct a new context with the GET verb and no payload body.
+    /// See the other constructors if this does not fit your situation.
+    pub fn new<UN, PW, UR>(username: UN, password: PW, uri: UR) -> Self
+        where UN: Into<Cow<'a, str>>,
+              PW: Into<Cow<'a, str>>,
+              UR: Into<Cow<'a, str>>
+    {
+        Self::new_with_method(username, password, uri, Option::<&'a[u8]>::None, HttpMethod::GET)
+    }
+
+    /// Construct a new context with the POST verb and a payload body (may be None).
+    /// See the other constructors if this does not fit your situation.
+    pub fn new_post<UN, PW, UR, BD>(
+        username: UN,
+        password: PW,
+        uri: UR,
+        body: Option<BD>,
+    ) -> Self
+        where UN: Into<Cow<'a, str>>,
+              PW: Into<Cow<'a, str>>,
+              UR: Into<Cow<'a, str>>,
+              BD: Into<Cow<'a, [u8]>>,
+    {
+        Self::new_with_method(username, password, uri, body, HttpMethod::POST)
+    }
+
+    /// Construct a new context with arbitrary verb and, optionally, a payload body
+    pub fn new_with_method<UN, PW, UR, BD>(
+        username: UN,
+        password: PW,
+        uri: UR,
+        body: Option<BD>,
+        method: HttpMethod,
+    ) -> Self
+        where UN: Into<Cow<'a, str>>,
+              PW: Into<Cow<'a, str>>,
+              UR: Into<Cow<'a, str>>,
+              BD: Into<Cow<'a, [u8]>>
+    {
+        Self {
+            username : username.into(),
+            password : password.into(),
+            uri : uri.into(),
+            body : body.map(Into::into),
+            method,
+            cnonce: None,
+        }
+    }
+
+    /// Set cnonce to the given value
+    pub fn set_custom_cnonce<CN>(&mut self, cnonce: CN)
+    where
+        CN: Into<Cow<'a, str>>
+    {
+        self.cnonce = Some(cnonce.into());
+    }
+}
+
+/// WWW-Authenticate header parsed from HTTP header value
+#[derive(Debug, PartialEq, Clone)]
+pub struct WwwAuthenticateHeader {
+    /// Domain is a list of URIs that will accept the same digest. None if not given (i.e applies to all)
+    pub domain: Option<Vec<String>>,
+    /// Authorization realm (i.e. hostname, serial number...)
+    pub realm: String,
+    /// Server nonce
+    pub nonce: String,
+    /// Server opaque string
+    pub opaque: Option<String>,
+    /// True if the server nonce expired.
+    /// This is sent in response to an auth attempt with an older digest.
+    /// The response should contain a new WWW-Authenticate header.
+    pub stale: bool,
+    /// Hashing algo
+    pub algorithm: Algorithm,
+    /// Digest algorithm variant
+    pub qop: Option<Vec<Qop>>,
+    /// Flag that the server supports user-hashes
+    pub userhash: bool,
+    /// Server-supported charset
+    pub charset: Charset,
+    /// nc - not part of the received header, but kept here for convenience and incremented each time
+    /// a response is composed with the same nonce.
+    pub nc: u32,
+}
+
+impl FromStr for WwwAuthenticateHeader {
+    type Err = crate::Error;
+
+    /// Parse HTTP header
+    fn from_str(input: &str) -> Result<Self> {
+        Self::parse(input)
+    }
+}
+
+impl WwwAuthenticateHeader {
+    /// Generate an [`AuthorizationHeader`](struct.AuthorizationHeader.html) to be sent to the server in a new request.
+    /// The [`self.nc`](struct.AuthorizationHeader.html#structfield.nc) field is incremented.
+    pub fn respond(
+        &mut self,
+        secrets: &AuthContext,
+    ) -> Result<AuthorizationHeader> {
+        AuthorizationHeader::from_prompt(self, secrets)
+    }
+
+    /// Construct from the `WWW-Authenticate` header string
+    ///
+    /// # Errors
+    /// If the header is malformed (e.g. missing 'realm', missing a closing quote, unknown algorithm etc.)
+    pub fn parse(input: &str) -> Result<Self> {
+        let mut input = input.trim();
+
+        // Remove leading "Digest"
+        if input.starts_with("Digest") {
+            input = &input["Digest".len()..];
+        }
+
+        let mut kv = parse_header_map(input)?;
+
+        Ok(Self {
+            domain: if let Some(domains) = kv.get("domain") {
+                let domains: Vec<&str> = domains.split(' ').collect();
+                Some(domains.iter().map(|x| x.trim().to_string()).collect())
+            } else {
+                None
+            },
+            realm: match kv.remove("realm") {
+                Some(v) => v,
+                None => return Err(MissingRequired("realm", input.into())),
+            },
+            nonce: match kv.remove("nonce") {
+                Some(v) => v,
+                None => return Err(MissingRequired("nonce", input.into())),
+            },
+            opaque: kv.remove("opaque"),
+            stale: match kv.get("stale") {
+                Some(v) => &v.to_ascii_lowercase() == "true",
+                None => false,
+            },
+            charset: match kv.get("charset") {
+                Some(v) => Charset::from_str(v)?,
+                None => Charset::ASCII,
+            },
+            algorithm: match kv.get("algorithm") {
+                Some(a) => Algorithm::from_str(&a)?,
+                _ => Algorithm::default(),
+            },
+            qop: if let Some(domains) = kv.get("qop") {
+                let domains: Vec<&str> = domains.split(',').collect();
+                let mut qops = vec![];
+                for d in domains {
+                    qops.push(Qop::from_str(d.trim())?);
+                }
+                Some(qops)
+            } else {
+                None
+            },
+            userhash: match kv.get("userhash") {
+                Some(v) => &v.to_ascii_lowercase() == "true",
+                None => false,
+            },
+            nc: 0,
+        })
+    }
+}
+
+impl Display for WwwAuthenticateHeader {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut entries = Vec::<NamedTag>::new();
+
+        f.write_str("Digest ")?;
+
+        entries.push(NamedTag::Quoted("realm", (&self.realm).into()));
+
+        if let Some(ref qops) = self.qop {
+            entries.push(NamedTag::Quoted("qop", join_vec(qops, ", ").into()));
+        }
+
+        if let Some(ref domains) = self.domain {
+            entries.push(NamedTag::Quoted("domain", join_vec(domains, " ").into()));
+        }
+
+        if self.stale {
+            entries.push(NamedTag::Plain("stale", "true".into()));
+        }
+
+        entries.push(NamedTag::Plain("algorithm", self.algorithm.to_string().into()));
+        entries.push(NamedTag::Quoted("nonce", (&self.nonce).into()));
+        if let Some(ref opaque) = self.opaque {
+            entries.push(NamedTag::Quoted("opaque", (opaque).into()));
+        }
+        entries.push(NamedTag::Plain("charset", self.charset.to_string().into()));
+
+        if self.userhash {
+            entries.push(NamedTag::Plain("userhash", "true".into()));
+        }
+
+        for (i, e) in entries.iter().enumerate() {
+            if i > 0 { f.write_str(", ")?; }
+            f.write_str(&e.to_string())?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Header sent back to the server, including password hashes.
 ///
 /// This can be obtained by calling [`AuthorizationHeader::from_prompt()`](#method.from_prompt),
 /// or from the [`WwwAuthenticateHeader`](struct.WwwAuthenticateHeader.html) prompt struct
 /// with [`.respond()`](struct.WwwAuthenticateHeader.html#method.respond)
-#[derive(Debug)]
-pub struct AuthorizationHeader<'ctx> {
-    /// The server header that triggered the authentication flow; used to retrieve some additional
-    /// fields when serializing to the header string
-    pub prompt: &'ctx WwwAuthenticateHeader,
+#[derive(Debug, PartialEq, Clone)]
+pub struct AuthorizationHeader {
+    /// Authorization realm
+    pub realm : String,
+    /// Server nonce
+    pub nonce: String,
+    /// Server opaque
+    pub opaque: Option<String>,
+    /// Flag that userhash was used
+    pub userhash : bool,
+    /// Hash algorithm
+    pub algorithm : Algorithm,
     /// Computed digest
     pub response: String,
     /// Username or hash (owned because of the computed hash)
     pub username: String,
     /// Requested URI
-    pub uri: &'ctx str,
+    pub uri: String,
     /// QOP chosen from the list offered by server, if any
     /// None in legacy compat mode (RFC 2069)
     pub qop: Option<Qop>,
@@ -391,7 +411,7 @@ pub struct AuthorizationHeader<'ctx> {
     pub nc: u32,
 }
 
-impl<'a> AuthorizationHeader<'a> {
+impl AuthorizationHeader {
     /// Construct using a parsed prompt header and an auth context, selecting suitable algorithm
     /// options. The [`WwwAuthenticateHeader`](struct.WwwAuthenticateHeader.html) struct contains a
     /// [`nc`](struct.WwwAuthenticateHeader.html#structfield.nc) field that is incremented by this
@@ -404,30 +424,20 @@ impl<'a> AuthorizationHeader<'a> {
     ///
     /// Fails if the source header is malformed so much that we can't figure out
     /// a proper response (e.g. given but invalid QOP options)
-    pub fn from_prompt<'p: 'a, 's: 'a>(
-        prompt: &'p mut WwwAuthenticateHeader,
-        context: &'s AuthContext,
-    ) -> Result<AuthorizationHeader<'a>> {
-        // figure out which QOP option to use
-        let empty_vec = vec![];
-        let qop_algo = match &prompt.qop {
-            None => QopAlgo::NONE,
+    pub fn from_prompt(
+        prompt: &mut WwwAuthenticateHeader,
+        context: &AuthContext,
+    ) -> Result<AuthorizationHeader> {
+
+        let qop = match &prompt.qop {
+            None => None,
             Some(vec) => {
                 // this is at least RFC2617, qop was given
                 if vec.contains(&Qop::AUTH_INT) {
-                    if let Some(b) = context.body {
-                        QopAlgo::AUTH_INT(b)
-                    } else {
-                        // we have no body. Fall back to regular auth if possible, or use empty
-                        if vec.contains(&Qop::AUTH) {
-                            QopAlgo::AUTH
-                        } else {
-                            QopAlgo::AUTH_INT(&empty_vec)
-                        }
-                    }
+                    Some(Qop::AUTH_INT)
                 } else if vec.contains(&Qop::AUTH) {
                     // "auth" is the second best after "auth-int"
-                    QopAlgo::AUTH
+                    Some(Qop::AUTH)
                 } else {
                     // parser bug - prompt.qop should have been None
                     return Err(BadQopOptions(join_vec(vec, ", ")));
@@ -435,15 +445,68 @@ impl<'a> AuthorizationHeader<'a> {
             }
         };
 
-        let h = &prompt.algorithm;
+        prompt.nc += 1;
+
+        let mut hdr = AuthorizationHeader {
+            realm: prompt.realm.clone(),
+            nonce: prompt.nonce.clone(),
+            opaque: prompt.opaque.clone(),
+            userhash: prompt.userhash,
+            algorithm: prompt.algorithm,
+            response : String::default(),
+            username : String::default(),
+            uri: context.uri.as_ref().into(),
+            qop,
+            cnonce: context.cnonce.as_ref().map(AsRef::as_ref).map(ToOwned::to_owned), // Will be generated if needed, if build_hash is set and this is None
+            nc: prompt.nc,
+        };
+
+        hdr.build_hash(context);
+
+        Ok(hdr)
+    }
+
+    /// Build the response digest from Auth Context.
+    ///
+    /// This function is used by client to fill the Authorization header.
+    /// It can be used by server using a known password to replicate the hash
+    /// and then compare "response".
+    ///
+    /// This function sets cnonce if it was None before, or reuses it.
+    ///
+    /// Fields updated in the Authorization header:
+    /// - qop (if it was auth-int before but no body was given in context)
+    /// - cnonce (if it was None before)
+    /// - username copied from context
+    /// - response
+    pub fn build_hash(&mut self, context : &AuthContext)
+    {
+        // figure out which QOP option to use
+        let qop_algo = match self.qop {
+            None => QopAlgo::NONE,
+            Some(Qop::AUTH_INT) => {
+                if let Some(b) = &context.body {
+                    QopAlgo::AUTH_INT(b.as_ref())
+                } else {
+                    // fallback
+                    QopAlgo::AUTH
+                }
+            }
+            Some(Qop::AUTH) => {
+                QopAlgo::AUTH
+            }
+        };
+
+        let h = &self.algorithm;
 
         let cnonce = {
-            match context.cnonce {
+            match &self.cnonce {
                 Some(cnonce) => cnonce.to_owned(),
                 None => {
                     let mut rng = rand::thread_rng();
                     let nonce_bytes: [u8; 16] = rng.gen();
-                    hex::encode(nonce_bytes)
+                    let cnonce = hex::encode(nonce_bytes);
+                    cnonce
                 }
             }
         };
@@ -453,16 +516,16 @@ impl<'a> AuthorizationHeader<'a> {
             let a = format!(
                 "{name}:{realm}:{pw}",
                 name = context.username,
-                realm = prompt.realm,
+                realm = self.realm,
                 pw = context.password
             );
 
-            let sess = prompt.algorithm.sess;
+            let sess = self.algorithm.sess;
             if sess {
                 format!(
                     "{hash}:{nonce}:{cnonce}",
                     hash = h.hash(a.as_bytes()),
-                    nonce = prompt.nonce,
+                    nonce = self.nonce,
                     cnonce = cnonce
                 )
             } else {
@@ -484,17 +547,17 @@ impl<'a> AuthorizationHeader<'a> {
         };
 
         // hashed or unhashed username - always hash if server wants it
-        let username = if prompt.userhash {
+        let username = if self.userhash {
             h.hash(
                 format!(
                     "{username}:{realm}",
                     username = context.username,
-                    realm = prompt.realm
+                    realm = self.realm
                 )
                     .as_bytes(),
             )
         } else {
-            context.username.to_owned()
+            context.username.as_ref().to_owned()
         };
 
         let qop: Option<Qop> = qop_algo.into();
@@ -502,17 +565,13 @@ impl<'a> AuthorizationHeader<'a> {
         let ha1 = h.hash_str(&a1);
         let ha2 = h.hash_str(&a2);
 
-        // Increment nonce counter
-        prompt.nc += 1;
-
-        // Compute the response
-        let response = match &qop {
+        self.response = match &qop {
             Some(q) => {
                 let tmp = format!(
                     "{ha1}:{nonce}:{nc:08x}:{cnonce}:{qop}:{ha2}",
                     ha1 = ha1,
-                    nonce = prompt.nonce,
-                    nc = prompt.nc,
+                    nonce = self.nonce,
+                    nc = self.nc,
                     cnonce = cnonce,
                     qop = q,
                     ha2 = ha2
@@ -523,66 +582,135 @@ impl<'a> AuthorizationHeader<'a> {
                 let tmp = format!(
                     "{ha1}:{nonce}:{ha2}",
                     ha1 = ha1,
-                    nonce = prompt.nonce,
+                    nonce = self.nonce,
                     ha2 = ha2
                 );
                 h.hash(tmp.as_bytes())
             }
         };
 
-        Ok(AuthorizationHeader {
-            prompt,
-            response,
-            username,
-            uri: context.uri,
-            qop,
-            cnonce: Some(cnonce),
-            nc: prompt.nc,
-        })
+        self.qop = qop;
+        self.username = username;
+        self.cnonce = qop.map(|_| cnonce);
     }
 
     /// Produce a header string (also accessible through the Display trait)
     pub fn to_header_string(&self) -> String {
-        // TODO move impl from Display here & clean it up
         self.to_string()
+    }
+
+    /// Construct from the `Authorization` header string
+    ///
+    /// # Errors
+    /// If the header is malformed (e.g. missing mandatory fields)
+    pub fn parse(input: &str) -> Result<Self> {
+        let mut input = input.trim();
+
+        // Remove leading "Digest"
+        if input.starts_with("Digest") {
+            input = &input["Digest".len()..];
+        }
+
+        let mut kv = parse_header_map(input)?;
+
+        let mut auth = Self {
+            username: match kv.remove("username") {
+                Some(v) => v,
+                None => return Err(MissingRequired("username", input.into())),
+            },
+            realm: match kv.remove("realm") {
+                Some(v) => v,
+                None => return Err(MissingRequired("realm", input.into())),
+            },
+            nonce: match kv.remove("nonce") {
+                Some(v) => v,
+                None => return Err(MissingRequired("nonce", input.into())),
+            },
+            uri: match kv.remove("uri") {
+                Some(v) => v,
+                None => return Err(MissingRequired("uri", input.into())),
+            },
+            response: match kv.remove("response") {
+                Some(v) => v,
+                None => return Err(MissingRequired("response", input.into())),
+            },
+            qop: kv.remove("qop").map(|s| Qop::from_str(&s)).transpose()?,
+            nc: match kv.remove("nc") {
+                Some(v) => u32::from_str_radix(&v, 16)?,
+                None => 1,
+            },
+            cnonce: kv.remove("cnonce"),
+            opaque: kv.remove("opaque"),
+            algorithm: match kv.get("algorithm") {
+                Some(a) => Algorithm::from_str(&a)?,
+                _ => Algorithm::default(),
+            },
+            userhash: match kv.get("userhash") {
+                Some(v) => &v.to_ascii_lowercase() == "true",
+                None => false,
+            },
+        };
+
+        if auth.qop.is_some() {
+            if !auth.cnonce.is_some() {
+                return Err(MissingRequired("cnonce", input.into()))
+            }
+        } else {
+            // cnonce must not be set if qop is not given, clear it.
+            auth.cnonce = None;
+        }
+
+        Ok(auth)
     }
 }
 
-impl<'a> Display for AuthorizationHeader<'a> {
+impl Display for AuthorizationHeader {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let mut entries = Vec::<NamedTag>::new();
+
         f.write_str("Digest ")?;
 
-        //TODO charset shenanigans with username* (UTF-8 charset)
-        write!(f, "username=\"{uname}\", realm=\"{realm}\", nonce=\"{nonce}\", uri=\"{uri}\"",
-               uname = self.username.quote_for_digest(),
-               realm = self.prompt.realm.quote_for_digest(),
-               nonce = self.prompt.nonce.quote_for_digest(),
-               uri = self.uri)?;
+        entries.push(NamedTag::Quoted("username", (&self.username).into()));
+        entries.push(NamedTag::Quoted("realm", (&self.realm).into()));
+        entries.push(NamedTag::Quoted("nonce", (&self.nonce).into()));
+        entries.push(NamedTag::Quoted("uri", (&self.uri).into()));
 
-        if self.prompt.qop.is_some() && self.cnonce.is_some() {
-            write!(f, ", qop={qop}, nc={nc:08x}, cnonce=\"{cnonce}\"",
-                   qop = self.qop.as_ref().unwrap(),
-                   nc = self.nc,
-                   cnonce = self.cnonce.as_ref().unwrap().quote_for_digest(),
-            )?;
+        if self.qop.is_some() && self.cnonce.is_some() {
+            entries.push(NamedTag::Plain("qop", self.qop.as_ref().unwrap().to_string().into()));
+            entries.push(NamedTag::Plain("nc", format!("{:08x}", self.nc).into()));
+            entries.push(NamedTag::Quoted("cnonce", self.cnonce.as_ref().unwrap().into()));
         }
 
-        write!(f, ", response=\"{}\"", self.response.quote_for_digest())?;
+        entries.push(NamedTag::Quoted("response", (&self.response).into()));
 
-        if let Some(opaque) = &self.prompt.opaque {
-            write!(f, ", opaque=\"{}\"", opaque.quote_for_digest())?;
+        if let Some(opaque) = &self.opaque {
+            entries.push(NamedTag::Quoted("opaque", opaque.into()));
         }
 
         // algorithm can be omitted if it is the default value (or in legacy compat mode)
-        if self.qop.is_some() || self.prompt.algorithm.algo != AlgorithmType::MD5 {
-            write!(f, ", algorithm={}", self.prompt.algorithm)?;
+        if self.qop.is_some() || self.algorithm.algo != AlgorithmType::MD5 {
+            entries.push(NamedTag::Plain("algorithm", self.algorithm.to_string().into()));
         }
 
-        if self.prompt.userhash {
-            f.write_str(", userhash=true")?;
+        if self.userhash {
+            entries.push(NamedTag::Plain("userhash", "true".into()));
+        }
+
+        for (i, e) in entries.iter().enumerate() {
+            if i > 0 { f.write_str(", ")?; }
+            f.write_str(&e.to_string())?;
         }
 
         Ok(())
+    }
+}
+
+impl FromStr for AuthorizationHeader {
+    type Err = crate::Error;
+
+    /// Parse HTTP header
+    fn from_str(input: &str) -> Result<Self> {
+        Self::parse(input)
     }
 }
 
@@ -810,9 +938,9 @@ r#"Digest realm="api@example.org",
         let answer = AuthorizationHeader::from_prompt(&mut prompt, &context).unwrap();
 
         // The spec has a wrong hash in the example, see errata
-        let str = answer.to_string().replace(", ", ",\n  ");
+        let s = answer.to_string().replace(", ", ",\n  ");
         assert_eq!(
-            str,
+            s,
             r#"
 Digest username="Mufasa",
   realm="testrealm@host.com",
@@ -823,6 +951,10 @@ Digest username="Mufasa",
 "#
                 .trim()
         );
+
+        // Try round trip
+        let parsed = AuthorizationHeader::parse(&s).unwrap();
+        assert_eq!(answer, parsed);
     }
 
     #[test]
@@ -838,14 +970,16 @@ Digest username="Mufasa",
         let mut context = AuthContext::new("Mufasa", "Circle Of Life", "/dir/index.html");
         context.set_custom_cnonce("0a4f113b");
 
+        assert_eq!(context.body, None);
+
         let mut prompt = WwwAuthenticateHeader::from_str(src).unwrap();
         let answer = AuthorizationHeader::from_prompt(&mut prompt, &context).unwrap();
 
-        let str = answer.to_string().replace(", ", ",\n  ");
+        let s = answer.to_string().replace(", ", ",\n  ");
         //println!("{}", str);
 
         assert_eq!(
-            str,
+            s,
             r#"
 Digest username="Mufasa",
   realm="testrealm@host.com",
@@ -860,6 +994,10 @@ Digest username="Mufasa",
 "#
                 .trim()
         );
+
+        // Try round trip
+        let parsed = AuthorizationHeader::parse(&s).unwrap();
+        assert_eq!(answer, parsed);
     }
 
     #[test]
@@ -879,10 +1017,10 @@ Digest username="Mufasa",
         let mut prompt = WwwAuthenticateHeader::from_str(src).unwrap();
         let answer = AuthorizationHeader::from_prompt(&mut prompt, &context).unwrap();
 
-        let str = answer.to_string().replace(", ", ",\n  ");
+        let s = answer.to_string().replace(", ", ",\n  ");
 
         assert_eq!(
-            str,
+            s,
             r#"
 Digest username="Mufasa",
   realm="http-auth@example.org",
@@ -897,6 +1035,10 @@ Digest username="Mufasa",
 "#
                 .trim()
         );
+
+        // Try round trip
+        let parsed = AuthorizationHeader::parse(&s).unwrap();
+        assert_eq!(answer, parsed);
     }
 
     #[test]
@@ -926,11 +1068,11 @@ Digest username="Mufasa",
         let mut prompt = WwwAuthenticateHeader::from_str(src).unwrap();
         let answer = AuthorizationHeader::from_prompt(&mut prompt, &context).unwrap();
 
-        let str = answer.to_string().replace(", ", ",\n  ");
+        let s = answer.to_string().replace(", ", ",\n  ");
         //println!("{}", str);
 
         assert_eq!(
-            str,
+            s,
             r#"
 Digest username="Mufasa",
   realm="http-auth@example.org",
@@ -945,5 +1087,9 @@ Digest username="Mufasa",
 "#
                 .trim()
         );
+
+        // Try round trip
+        let parsed = AuthorizationHeader::parse(&s).unwrap();
+        assert_eq!(answer, parsed);
     }
 }

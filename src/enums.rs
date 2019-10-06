@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
 /// Algorithm type
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[allow(non_camel_case_types)]
 pub enum AlgorithmType {
     MD5,
@@ -14,7 +14,7 @@ pub enum AlgorithmType {
 }
 
 /// Algorithm and the -sess flag pair
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Algorithm {
     pub algo: AlgorithmType,
     pub sess: bool,
@@ -86,7 +86,7 @@ impl Display for Algorithm {
 }
 
 /// QOP field values
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[allow(non_camel_case_types)]
 pub enum Qop {
     AUTH,
@@ -136,7 +136,7 @@ impl<'a> Into<Option<Qop>> for QopAlgo<'a> {
 }
 
 /// Charset field value as specified by the server
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Charset {
     ASCII,
     UTF8,
