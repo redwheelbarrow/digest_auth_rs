@@ -461,7 +461,7 @@ impl AuthorizationHeader {
             nc: prompt.nc,
         };
 
-        hdr.build_hash(context);
+        hdr.digest(context);
 
         Ok(hdr)
     }
@@ -479,7 +479,7 @@ impl AuthorizationHeader {
     /// - cnonce (if it was None before)
     /// - username copied from context
     /// - response
-    pub fn build_hash(&mut self, context : &AuthContext)
+    pub fn digest(&mut self, context : &AuthContext)
     {
         // figure out which QOP option to use
         let qop_algo = match self.qop {

@@ -2,8 +2,12 @@
 //! It can be used in conjunction with libraries like reqwest to access e.g. IP cameras
 //! that use this authentication scheme.
 //!
-//! This library is intended for the http client. The algorithm is symmetrical,
-//! it's just not optimized for / tested on the server side yet.
+//! This library was written for the http client, but since the algorithm is symmetrical,
+//! it can be used by the server side as well. Server-side nonce management (generation, timed
+//! expiry) and authorization checking is left to user's implementation.
+//!
+//! The `AuthorizationHeader::digest()` method can be used server-side to replicate the
+//! password/body hash; then just check if the computed digest matches what the user sent.
 //!
 //! # Examples
 //!
