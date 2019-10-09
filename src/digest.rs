@@ -32,7 +32,7 @@ impl QuoteForDigest for String {
 }
 
 /// Join a Vec of Display items using a separator
-fn join_vec<T : ToString>(vec : &Vec<T>, sep : &str) -> String {
+fn join_vec<T: ToString>(vec: &Vec<T>, sep: &str) -> String {
     vec.iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
@@ -41,7 +41,7 @@ fn join_vec<T : ToString>(vec : &Vec<T>, sep : &str) -> String {
 
 enum NamedTag<'a> {
     Quoted(&'a str, Cow<'a, str>),
-    Plain(&'a str, Cow<'a, str>)
+    Plain(&'a str, Cow<'a, str>),
 }
 
 impl Display for NamedTag<'_> {
@@ -50,13 +50,10 @@ impl Display for NamedTag<'_> {
             NamedTag::Quoted(name, content) => {
                 write!(f, "{}=\"{}\"", name, content.quote_for_digest())
             }
-            NamedTag::Plain(name, content) => {
-                write!(f, "{}={}", name, content)
-            }
+            NamedTag::Plain(name, content) => write!(f, "{}={}", name, content),
         }
     }
 }
-
 
 /// Helper func that parses the key-value string received from server
 fn parse_header_map(input: &str) -> Result<HashMap<String, String>> {
@@ -148,7 +145,6 @@ fn parse_header_map(input: &str) -> Result<HashMap<String, String>> {
     Ok(parsed)
 }
 
-
 /// Login attempt context
 ///
 /// All fields are borrowed to reduce runtime overhead; this struct should not be stored anywhere,
@@ -174,25 +170,28 @@ impl<'a> AuthContext<'a> {
     /// Construct a new context with the GET verb and no payload body.
     /// See the other constructors if this does not fit your situation.
     pub fn new<UN, PW, UR>(username: UN, password: PW, uri: UR) -> Self
-        where UN: Into<Cow<'a, str>>,
-              PW: Into<Cow<'a, str>>,
-              UR: Into<Cow<'a, str>>
+    where
+        UN: Into<Cow<'a, str>>,
+        PW: Into<Cow<'a, str>>,
+        UR: Into<Cow<'a, str>>,
     {
-        Self::new_with_method(username, password, uri, Option::<&'a[u8]>::None, HttpMethod::GET)
+        Self::new_with_method(
+            username,
+            password,
+            uri,
+            Option::<&'a [u8]>::None,
+            HttpMethod::GET,
+        )
     }
 
     /// Construct a new context with the POST verb and a payload body (may be None).
     /// See the other constructors if this does not fit your situation.
-    pub fn new_post<UN, PW, UR, BD>(
-        username: UN,
-        password: PW,
-        uri: UR,
-        body: Option<BD>,
-    ) -> Self
-        where UN: Into<Cow<'a, str>>,
-              PW: Into<Cow<'a, str>>,
-              UR: Into<Cow<'a, str>>,
-              BD: Into<Cow<'a, [u8]>>,
+    pub fn new_post<UN, PW, UR, BD>(username: UN, password: PW, uri: UR, body: Option<BD>) -> Self
+    where
+        UN: Into<Cow<'a, str>>,
+        PW: Into<Cow<'a, str>>,
+        UR: Into<Cow<'a, str>>,
+        BD: Into<Cow<'a, [u8]>>,
     {
         Self::new_with_method(username, password, uri, body, HttpMethod::POST)
     }
@@ -205,16 +204,17 @@ impl<'a> AuthContext<'a> {
         body: Option<BD>,
         method: HttpMethod,
     ) -> Self
-        where UN: Into<Cow<'a, str>>,
-              PW: Into<Cow<'a, str>>,
-              UR: Into<Cow<'a, str>>,
-              BD: Into<Cow<'a, [u8]>>
+    where
+        UN: Into<Cow<'a, str>>,
+        PW: Into<Cow<'a, str>>,
+        UR: Into<Cow<'a, str>>,
+        BD: Into<Cow<'a, [u8]>>,
     {
         Self {
-            username : username.into(),
-            password : password.into(),
-            uri : uri.into(),
-            body : body.map(Into::into),
+            username: username.into(),
+            password: password.into(),
+            uri: uri.into(),
+            body: body.map(Into::into),
             method,
             cnonce: None,
         }
@@ -223,7 +223,7 @@ impl<'a> AuthContext<'a> {
     /// Set cnonce to the given value
     pub fn set_custom_cnonce<CN>(&mut self, cnonce: CN)
     where
-        CN: Into<Cow<'a, str>>
+        CN: Into<Cow<'a, str>>,
     {
         self.cnonce = Some(cnonce.into());
     }
@@ -269,10 +269,7 @@ impl FromStr for WwwAuthenticateHeader {
 impl WwwAuthenticateHeader {
     /// Generate an [`AuthorizationHeader`](struct.AuthorizationHeader.html) to be sent to the server in a new request.
     /// The [`self.nc`](struct.AuthorizationHeader.html#structfield.nc) field is incremented.
-    pub fn respond(
-        &mut self,
-        secrets: &AuthContext,
-    ) -> Result<AuthorizationHeader> {
+    pub fn respond(&mut self, secrets: &AuthContext) -> Result<AuthorizationHeader> {
         AuthorizationHeader::from_prompt(self, secrets)
     }
 
@@ -357,7 +354,10 @@ impl Display for WwwAuthenticateHeader {
             entries.push(NamedTag::Plain("stale", "true".into()));
         }
 
-        entries.push(NamedTag::Plain("algorithm", self.algorithm.to_string().into()));
+        entries.push(NamedTag::Plain(
+            "algorithm",
+            self.algorithm.to_string().into(),
+        ));
         entries.push(NamedTag::Quoted("nonce", (&self.nonce).into()));
         if let Some(ref opaque) = self.opaque {
             entries.push(NamedTag::Quoted("opaque", (opaque).into()));
@@ -369,7 +369,9 @@ impl Display for WwwAuthenticateHeader {
         }
 
         for (i, e) in entries.iter().enumerate() {
-            if i > 0 { f.write_str(", ")?; }
+            if i > 0 {
+                f.write_str(", ")?;
+            }
             f.write_str(&e.to_string())?;
         }
 
@@ -385,15 +387,15 @@ impl Display for WwwAuthenticateHeader {
 #[derive(Debug, PartialEq, Clone)]
 pub struct AuthorizationHeader {
     /// Authorization realm
-    pub realm : String,
+    pub realm: String,
     /// Server nonce
     pub nonce: String,
     /// Server opaque
     pub opaque: Option<String>,
     /// Flag that userhash was used
-    pub userhash : bool,
+    pub userhash: bool,
     /// Hash algorithm
-    pub algorithm : Algorithm,
+    pub algorithm: Algorithm,
     /// Computed digest
     pub response: String,
     /// Username or hash (owned because of the computed hash)
@@ -428,7 +430,6 @@ impl AuthorizationHeader {
         prompt: &mut WwwAuthenticateHeader,
         context: &AuthContext,
     ) -> Result<AuthorizationHeader> {
-
         let qop = match &prompt.qop {
             None => None,
             Some(vec) => {
@@ -453,11 +454,15 @@ impl AuthorizationHeader {
             opaque: prompt.opaque.clone(),
             userhash: prompt.userhash,
             algorithm: prompt.algorithm,
-            response : String::default(),
-            username : String::default(),
+            response: String::default(),
+            username: String::default(),
             uri: context.uri.as_ref().into(),
             qop,
-            cnonce: context.cnonce.as_ref().map(AsRef::as_ref).map(ToOwned::to_owned), // Will be generated if needed, if build_hash is set and this is None
+            cnonce: context
+                .cnonce
+                .as_ref()
+                .map(AsRef::as_ref)
+                .map(ToOwned::to_owned), // Will be generated if needed, if build_hash is set and this is None
             nc: prompt.nc,
         };
 
@@ -479,8 +484,7 @@ impl AuthorizationHeader {
     /// - cnonce (if it was None before)
     /// - username copied from context
     /// - response
-    pub fn digest(&mut self, context : &AuthContext)
-    {
+    pub fn digest(&mut self, context: &AuthContext) {
         // figure out which QOP option to use
         let qop_algo = match self.qop {
             None => QopAlgo::NONE,
@@ -492,9 +496,7 @@ impl AuthorizationHeader {
                     QopAlgo::AUTH
                 }
             }
-            Some(Qop::AUTH) => {
-                QopAlgo::AUTH
-            }
+            Some(Qop::AUTH) => QopAlgo::AUTH,
         };
 
         let h = &self.algorithm;
@@ -554,7 +556,7 @@ impl AuthorizationHeader {
                     username = context.username,
                     realm = self.realm
                 )
-                    .as_bytes(),
+                .as_bytes(),
             )
         } else {
             context.username.as_ref().to_owned()
@@ -653,7 +655,7 @@ impl AuthorizationHeader {
 
         if auth.qop.is_some() {
             if !auth.cnonce.is_some() {
-                return Err(MissingRequired("cnonce", input.into()))
+                return Err(MissingRequired("cnonce", input.into()));
             }
         } else {
             // cnonce must not be set if qop is not given, clear it.
@@ -676,9 +678,15 @@ impl Display for AuthorizationHeader {
         entries.push(NamedTag::Quoted("uri", (&self.uri).into()));
 
         if self.qop.is_some() && self.cnonce.is_some() {
-            entries.push(NamedTag::Plain("qop", self.qop.as_ref().unwrap().to_string().into()));
+            entries.push(NamedTag::Plain(
+                "qop",
+                self.qop.as_ref().unwrap().to_string().into(),
+            ));
             entries.push(NamedTag::Plain("nc", format!("{:08x}", self.nc).into()));
-            entries.push(NamedTag::Quoted("cnonce", self.cnonce.as_ref().unwrap().into()));
+            entries.push(NamedTag::Quoted(
+                "cnonce",
+                self.cnonce.as_ref().unwrap().into(),
+            ));
         }
 
         entries.push(NamedTag::Quoted("response", (&self.response).into()));
@@ -689,7 +697,10 @@ impl Display for AuthorizationHeader {
 
         // algorithm can be omitted if it is the default value (or in legacy compat mode)
         if self.qop.is_some() || self.algorithm.algo != AlgorithmType::MD5 {
-            entries.push(NamedTag::Plain("algorithm", self.algorithm.to_string().into()));
+            entries.push(NamedTag::Plain(
+                "algorithm",
+                self.algorithm.to_string().into(),
+            ));
         }
 
         if self.userhash {
@@ -697,7 +708,9 @@ impl Display for AuthorizationHeader {
         }
 
         for (i, e) in entries.iter().enumerate() {
-            if i > 0 { f.write_str(", ")?; }
+            if i > 0 {
+                f.write_str(", ")?;
+            }
             f.write_str(&e.to_string())?;
         }
 
@@ -756,8 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_header_map2()
-    {
+    fn test_parse_header_map2() {
         let src = r#"realm="api@example.org""#;
         let map = parse_header_map(src).unwrap();
         assert_eq!(map.get("realm").unwrap(), "api@example.org");
@@ -836,38 +848,47 @@ mod tests {
         };
 
         assert_eq!(
-r#"Digest realm="api@example.org",
+            r#"Digest realm="api@example.org",
   qop="auth",
   domain="/my/nice/url /login /logout",
   algorithm=SHA-512-256,
   nonce="5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK",
   opaque="HRPCssKJSGjCrkzDg8OhwpzCiGPChXYjwrI2QmXDnsOS",
   charset=UTF-8,
-  userhash=true"#.replace(",\n  ", ", "), hdr.to_string());
+  userhash=true"#
+                .replace(",\n  ", ", "),
+            hdr.to_string()
+        );
 
-        hdr.stale=true;
-        hdr.userhash=false;
+        hdr.stale = true;
+        hdr.userhash = false;
         hdr.opaque = None;
         hdr.qop = None;
 
         assert_eq!(
-r#"Digest realm="api@example.org",
+            r#"Digest realm="api@example.org",
   domain="/my/nice/url /login /logout",
   stale=true,
   algorithm=SHA-512-256,
   nonce="5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK",
-  charset=UTF-8"#.replace(",\n  ", ", "), hdr.to_string());
+  charset=UTF-8"#
+                .replace(",\n  ", ", "),
+            hdr.to_string()
+        );
 
         hdr.qop = Some(vec![Qop::AUTH, Qop::AUTH_INT]);
 
         assert_eq!(
-r#"Digest realm="api@example.org",
+            r#"Digest realm="api@example.org",
   qop="auth, auth-int",
   domain="/my/nice/url /login /logout",
   stale=true,
   algorithm=SHA-512-256,
   nonce="5TsQWLVdgBdmrQ0XsxbDODV+57QdFR34I9HAbC/RVvkK",
-  charset=UTF-8"#.replace(",\n  ", ", "), hdr.to_string());
+  charset=UTF-8"#
+                .replace(",\n  ", ", "),
+            hdr.to_string()
+        );
     }
 
     #[test]
@@ -949,7 +970,7 @@ Digest username="Mufasa",
   response="1949323746fe6a43ef61f9606e7febea",
   opaque="5ccc069c403ebaf9f0171e9517f40e41"
 "#
-                .trim()
+            .trim()
         );
 
         // Try round trip
@@ -992,7 +1013,7 @@ Digest username="Mufasa",
   opaque="5ccc069c403ebaf9f0171e9517f40e41",
   algorithm=MD5
 "#
-                .trim()
+            .trim()
         );
 
         // Try round trip
@@ -1033,7 +1054,7 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=MD5
 "#
-                .trim()
+            .trim()
         );
 
         // Try round trip
@@ -1085,7 +1106,7 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=SHA-256
 "#
-                .trim()
+            .trim()
         );
 
         // Try round trip
