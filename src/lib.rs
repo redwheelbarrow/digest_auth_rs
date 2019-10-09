@@ -98,3 +98,8 @@ Digest username="Mufasa",
         .trim()
     );
 }
+
+#[test]
+fn test_cast_error() {
+    let _m : Box<dyn std::error::Error> = Error::UnknownAlgorithm("Uhhh".into()).into();
+}

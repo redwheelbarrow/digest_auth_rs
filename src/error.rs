@@ -35,3 +35,5 @@ impl From<std::num::ParseIntError> for Error {
         NumParseError
     }
 }
+
+impl std::error::Error for Error {}
