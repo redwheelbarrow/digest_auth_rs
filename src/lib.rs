@@ -101,5 +101,5 @@ Digest username="Mufasa",
 
 #[test]
 fn test_cast_error() {
-    let _m : Box<dyn std::error::Error> = Error::UnknownAlgorithm("Uhhh".into()).into();
+    let _m: Box<dyn std::error::Error> = Error::UnknownAlgorithm("Uhhh".into()).into();
 }

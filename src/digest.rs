@@ -32,7 +32,7 @@ impl QuoteForDigest for String {
 }
 
 /// Join a Vec of Display items using a separator
-fn join_vec<T: ToString>(vec: &Vec<T>, sep: &str) -> String {
+fn join_vec<T: ToString>(vec: &[T], sep: &str) -> String {
     vec.iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
@@ -507,8 +507,8 @@ impl AuthorizationHeader {
                 None => {
                     let mut rng = rand::thread_rng();
                     let nonce_bytes: [u8; 16] = rng.gen();
-                    let cnonce = hex::encode(nonce_bytes);
-                    cnonce
+
+                    hex::encode(nonce_bytes)
                 }
             }
         };
@@ -654,7 +654,7 @@ impl AuthorizationHeader {
         };
 
         if auth.qop.is_some() {
-            if !auth.cnonce.is_some() {
+            if auth.cnonce.is_none() {
                 return Err(MissingRequired("cnonce", input.into()));
             }
         } else {

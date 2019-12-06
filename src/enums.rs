@@ -30,8 +30,8 @@ impl Algorithm {
     }
 
     /// Calculate a hash of bytes using the selected algorithm
-    pub fn hash(&self, bytes: &[u8]) -> String {
-        let mut hash : Box<dyn DynDigest> = match self.algo {
+    pub fn hash(self, bytes: &[u8]) -> String {
+        let mut hash: Box<dyn DynDigest> = match self.algo {
             AlgorithmType::MD5 => Box::new(Md5::new()),
             AlgorithmType::SHA2_256 => Box::new(Sha256::new()),
             AlgorithmType::SHA2_512_256 => Box::new(Sha512Trunc256::new()),
@@ -42,7 +42,7 @@ impl Algorithm {
     }
 
     /// Calculate a hash of string's bytes using the selected algorithm
-    pub fn hash_str(&self, bytes: &str) -> String {
+    pub fn hash_str(self, bytes: &str) -> String {
         self.hash(bytes.as_bytes())
     }
 }
