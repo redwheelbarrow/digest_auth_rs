@@ -1,6 +1,6 @@
 [package]
 name = "digest_auth"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Ondřej Hruška <ondra@ondrovo.com>"]
 edition = "2018"
 description = "Implementation of the Digest Auth algorithm as defined in IETF RFC 2069, 2617, and 7616, intended for HTTP clients"
@@ -15,6 +15,8 @@ categories = [
 license = "MIT"
 
 [dependencies]
-rust-crypto = "0.2"
 rand = "0.6"
 hex = "0.3.2"
+sha2 = "0.8.0"
+md-5 = "0.8.0"
+digest = "0.8.1"
