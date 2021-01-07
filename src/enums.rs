@@ -37,8 +37,8 @@ impl Algorithm {
             AlgorithmType::SHA2_512_256 => Box::new(Sha512Trunc256::new()),
         };
 
-        hash.input(bytes);
-        hex::encode(hash.result())
+        hash.update(bytes);
+        hex::encode(hash.finalize())
     }
 
     /// Calculate a hash of string's bytes using the selected algorithm

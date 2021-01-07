@@ -15,8 +15,8 @@ categories = [
 license = "MIT"
 
 [dependencies]
-rand = "0.7"
+rand = "0.8"
 hex = "0.4"
-sha2 = "0.8"
-md-5 = "0.8"
-digest = "0.8"
+sha2 = "0.9"
+md-5 = "0.9"
+digest = "0.9"
