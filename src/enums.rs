@@ -168,20 +168,20 @@ impl Display for Charset {
 
 /// HTTP method (used when generating the response hash for some Qop options)
 #[derive(Debug)]
-pub enum HttpMethod {
+pub enum HttpMethod<'a> {
     GET,
     POST,
     HEAD,
-    OTHER(&'static str),
+    OTHER(&'a str),
 }
 
-impl Default for HttpMethod {
+impl<'a> Default for HttpMethod<'a> {
     fn default() -> Self {
         HttpMethod::GET
     }
 }
 
-impl Display for HttpMethod {
+impl<'a> Display for HttpMethod<'a> {
     /// Convert to uppercase string
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str(match self {

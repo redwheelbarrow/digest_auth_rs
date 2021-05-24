@@ -161,7 +161,7 @@ pub struct AuthContext<'a> {
     /// May be left out if not using auth-int
     pub body: Option<Cow<'a, [u8]>>,
     /// HTTP method used (defaults to GET)
-    pub method: HttpMethod,
+    pub method: HttpMethod<'a>,
     /// Spoofed client nonce (use only for tests; a random nonce is generated automatically)
     pub cnonce: Option<Cow<'a, str>>,
 }
@@ -202,7 +202,7 @@ impl<'a> AuthContext<'a> {
         password: PW,
         uri: UR,
         body: Option<BD>,
-        method: HttpMethod,
+        method: HttpMethod<'a>,
     ) -> Self
     where
         UN: Into<Cow<'a, str>>,
