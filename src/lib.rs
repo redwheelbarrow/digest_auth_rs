@@ -62,9 +62,13 @@ pub fn parse(www_authorize: &str) -> Result<WwwAuthenticateHeader> {
     WwwAuthenticateHeader::parse(www_authorize)
 }
 
-#[test]
-fn test_parse_respond() {
-    let src = r#"
+#[cfg(test)]
+mod test {
+    use crate::{AuthContext, Error};
+
+    #[test]
+    fn test_parse_respond() {
+        let src = r#"
     Digest
        realm="http-auth@example.org",
        qop="auth, auth-int",
@@ -73,17 +77,17 @@ fn test_parse_respond() {
        opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS"
     "#;
 
-    let mut context = AuthContext::new("Mufasa", "Circle of Life", "/dir/index.html");
-    context.set_custom_cnonce("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ");
+        let mut context = AuthContext::new("Mufasa", "Circle of Life", "/dir/index.html");
+        context.set_custom_cnonce("f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ");
 
-    let mut prompt = crate::parse(src).unwrap();
-    let answer = prompt.respond(&context).unwrap();
+        let mut prompt = crate::parse(src).unwrap();
+        let answer = prompt.respond(&context).unwrap();
 
-    let str = answer.to_string().replace(", ", ",\n  ");
+        let str = answer.to_string().replace(", ", ",\n  ");
 
-    assert_eq!(
-        str,
-        r#"
+        assert_eq!(
+            str,
+            r#"
 Digest username="Mufasa",
   realm="http-auth@example.org",
   nonce="7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v",
@@ -95,11 +99,12 @@ Digest username="Mufasa",
   opaque="FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS",
   algorithm=MD5
 "#
-        .trim()
-    );
-}
+            .trim()
+        );
+    }
 
-#[test]
-fn test_cast_error() {
-    let _m: Box<dyn std::error::Error> = Error::UnknownAlgorithm("Uhhh".into()).into();
+    #[test]
+    fn test_cast_error() {
+        let _m: Box<dyn std::error::Error> = Error::UnknownAlgorithm("Uhhh".into()).into();
+    }
 }

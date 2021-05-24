@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use crate::{Error, Error::*, Result};
 use std::fmt;
 use std::fmt::{Display, Formatter};
@@ -6,6 +8,7 @@ use std::str::FromStr;
 use digest::{Digest, DynDigest};
 use md5::Md5;
 use sha2::{Sha256, Sha512Trunc256};
+use std::borrow::Cow;
 
 /// Algorithm type
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -127,10 +130,9 @@ pub enum QopAlgo<'a> {
 }
 
 // casting back...
-impl<'a> Into<Option<Qop>> for QopAlgo<'a> {
-    /// Convert to ?Qop
-    fn into(self) -> Option<Qop> {
-        match self {
+impl<'a> From<QopAlgo<'a>> for Option<Qop> {
+    fn from(algo: QopAlgo<'a>) -> Self {
+        match algo {
             QopAlgo::NONE => None,
             QopAlgo::AUTH => Some(Qop::AUTH),
             QopAlgo::AUTH_INT(_) => Some(Qop::AUTH_INT),
@@ -167,12 +169,12 @@ impl Display for Charset {
 }
 
 /// HTTP method (used when generating the response hash for some Qop options)
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum HttpMethod<'a> {
     GET,
     POST,
     HEAD,
-    OTHER(&'a str),
+    OTHER(Cow<'a, str>),
 }
 
 impl<'a> Default for HttpMethod<'a> {
@@ -190,5 +192,236 @@ impl<'a> Display for HttpMethod<'a> {
             HttpMethod::HEAD => "HEAD",
             HttpMethod::OTHER(s) => s,
         })
+    }
+}
+
+impl<'a> From<&'a str> for HttpMethod<'a> {
+    fn from(s: &'a str) -> Self {
+        match s {
+            "GET" => HttpMethod::GET,
+            "POST" => HttpMethod::POST,
+            "HEAD" => HttpMethod::HEAD,
+            s => HttpMethod::OTHER(Cow::Borrowed(s)),
+        }
+    }
+}
+
+impl<'a> From<&'a [u8]> for HttpMethod<'a> {
+    fn from(s: &'a [u8]) -> Self {
+        String::from_utf8_lossy(s).into()
+    }
+}
+
+impl<'a> From<String> for HttpMethod<'a> {
+    fn from(s: String) -> Self {
+        match &s[..] {
+            "GET" => HttpMethod::GET,
+            "POST" => HttpMethod::POST,
+            "HEAD" => HttpMethod::HEAD,
+            _ => HttpMethod::OTHER(Cow::Owned(s)),
+        }
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for HttpMethod<'a> {
+    fn from(s: Cow<'a, str>) -> Self {
+        match &s[..] {
+            "GET" => HttpMethod::GET,
+            "POST" => HttpMethod::POST,
+            "HEAD" => HttpMethod::HEAD,
+            _ => HttpMethod::OTHER(s),
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl From<http::Method> for HttpMethod<'static> {
+    fn from(method: http::Method) -> Self {
+        match method {
+            http::Method::GET => HttpMethod::GET,
+            http::Method::POST => HttpMethod::POST,
+            http::Method::HEAD => HttpMethod::HEAD,
+            other => HttpMethod::OTHER(other.to_string().into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::error::Error::{BadCharset, BadQop, UnknownAlgorithm};
+    use crate::{Algorithm, AlgorithmType, Charset, HttpMethod, Qop, QopAlgo};
+    use std::borrow::Cow;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_algorithm_type() {
+        // String parsing
+        assert_eq!(
+            Ok(Algorithm::new(AlgorithmType::MD5, false)),
+            Algorithm::from_str("MD5")
+        );
+        assert_eq!(
+            Ok(Algorithm::new(AlgorithmType::MD5, true)),
+            Algorithm::from_str("MD5-sess")
+        );
+        assert_eq!(
+            Ok(Algorithm::new(AlgorithmType::SHA2_256, false)),
+            Algorithm::from_str("SHA-256")
+        );
+        assert_eq!(
+            Ok(Algorithm::new(AlgorithmType::SHA2_256, true)),
+            Algorithm::from_str("SHA-256-sess")
+        );
+        assert_eq!(
+            Ok(Algorithm::new(AlgorithmType::SHA2_512_256, false)),
+            Algorithm::from_str("SHA-512-256")
+        );
+        assert_eq!(
+            Ok(Algorithm::new(AlgorithmType::SHA2_512_256, true)),
+            Algorithm::from_str("SHA-512-256-sess")
+        );
+        assert_eq!(
+            Err(UnknownAlgorithm("OTHER_ALGORITHM".to_string())),
+            Algorithm::from_str("OTHER_ALGORITHM")
+        );
+
+        // String building
+        assert_eq!(
+            "MD5".to_string(),
+            Algorithm::new(AlgorithmType::MD5, false).to_string()
+        );
+        assert_eq!(
+            "MD5-sess".to_string(),
+            Algorithm::new(AlgorithmType::MD5, true).to_string()
+        );
+        assert_eq!(
+            "SHA-256".to_string(),
+            Algorithm::new(AlgorithmType::SHA2_256, false).to_string()
+        );
+        assert_eq!(
+            "SHA-256-sess".to_string(),
+            Algorithm::new(AlgorithmType::SHA2_256, true).to_string()
+        );
+        assert_eq!(
+            "SHA-512-256".to_string(),
+            Algorithm::new(AlgorithmType::SHA2_512_256, false).to_string()
+        );
+        assert_eq!(
+            "SHA-512-256-sess".to_string(),
+            Algorithm::new(AlgorithmType::SHA2_512_256, true).to_string()
+        );
+
+        // Default
+        assert_eq!(
+            Algorithm::new(AlgorithmType::MD5, false),
+            Default::default()
+        );
+
+        // Hash calculation
+        assert_eq!(
+            "e2fc714c4727ee9395f324cd2e7f331f".to_string(),
+            Algorithm::new(AlgorithmType::MD5, false).hash("abcd".as_bytes())
+        );
+
+        assert_eq!(
+            "e2fc714c4727ee9395f324cd2e7f331f".to_string(),
+            Algorithm::new(AlgorithmType::MD5, false).hash_str("abcd")
+        );
+
+        assert_eq!(
+            "88d4266fd4e6338d13b845fcf289579d209c897823b9217da3e161936f031589".to_string(),
+            Algorithm::new(AlgorithmType::SHA2_256, false).hash("abcd".as_bytes())
+        );
+
+        assert_eq!(
+            "d2891c7978be0e24948f37caa415b87cb5cbe2b26b7bad9dc6391b8a6f6ddcc9".to_string(),
+            Algorithm::new(AlgorithmType::SHA2_512_256, false).hash("abcd".as_bytes())
+        );
+    }
+
+    #[test]
+    fn test_qop() {
+        assert_eq!(Ok(Qop::AUTH), Qop::from_str("auth"));
+        assert_eq!(Ok(Qop::AUTH_INT), Qop::from_str("auth-int"));
+        assert_eq!(Err(BadQop("banana".to_string())), Qop::from_str("banana"));
+
+        assert_eq!("auth".to_string(), Qop::AUTH.to_string());
+        assert_eq!("auth-int".to_string(), Qop::AUTH_INT.to_string());
+    }
+
+    #[test]
+    fn test_qop_algo() {
+        assert_eq!(Option::<Qop>::None, QopAlgo::NONE.into());
+        assert_eq!(Some(Qop::AUTH), QopAlgo::AUTH.into());
+        assert_eq!(
+            Some(Qop::AUTH_INT),
+            QopAlgo::AUTH_INT("foo".as_bytes()).into()
+        );
+    }
+
+    #[test]
+    fn test_charset() {
+        assert_eq!(Ok(Charset::UTF8), Charset::from_str("UTF-8"));
+        assert_eq!(Err(BadCharset("ASCII".into())), Charset::from_str("ASCII"));
+
+        assert_eq!("UTF-8".to_string(), Charset::UTF8.to_string());
+        assert_eq!("ASCII".to_string(), Charset::ASCII.to_string());
+    }
+
+    #[test]
+    fn test_http_method() {
+        // Well known 'static
+        assert_eq!(HttpMethod::GET, "GET".into());
+        assert_eq!(HttpMethod::POST, "POST".into());
+        assert_eq!(HttpMethod::HEAD, "HEAD".into());
+        // As bytes
+        assert_eq!(HttpMethod::GET, "GET".as_bytes().into());
+        assert_eq!(
+            HttpMethod::OTHER(Cow::Borrowed("ěščř")),
+            "ěščř".as_bytes().into()
+        );
+        assert_eq!(
+            HttpMethod::OTHER(Cow::Owned("AB�".to_string())),
+            (&[65u8, 66, 156][..]).into()
+        );
+        // Well known String
+        assert_eq!(HttpMethod::GET, String::from("GET").into());
+        // Custom String
+        assert_eq!(
+            HttpMethod::OTHER(Cow::Borrowed("NonsenseMethod")),
+            "NonsenseMethod".into()
+        );
+        assert_eq!(
+            HttpMethod::OTHER(Cow::Owned("NonsenseMethod".to_string())),
+            "NonsenseMethod".to_string().into()
+        );
+        // Custom Cow
+        assert_eq!(HttpMethod::HEAD, Cow::Borrowed("HEAD").into());
+        assert_eq!(
+            HttpMethod::OTHER(Cow::Borrowed("NonsenseMethod")),
+            Cow::Borrowed("NonsenseMethod").into()
+        );
+        // to string
+        assert_eq!("GET".to_string(), HttpMethod::GET.to_string());
+        assert_eq!("POST".to_string(), HttpMethod::POST.to_string());
+        assert_eq!("HEAD".to_string(), HttpMethod::HEAD.to_string());
+        assert_eq!(
+            "NonsenseMethod".to_string(),
+            HttpMethod::OTHER(Cow::Borrowed("NonsenseMethod")).to_string()
+        );
+        assert_eq!(
+            "NonsenseMethod".to_string(),
+            HttpMethod::OTHER(Cow::Owned("NonsenseMethod".to_string())).to_string()
+        );
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_http_crate() {
+        assert_eq!(HttpMethod::GET, http::Method::GET.into());
+        assert_eq!(
+            HttpMethod::OTHER(Cow::Owned("BANANA".to_string())),
+            http::Method::from_str("BANANA").unwrap().into()
+        );
     }
 }

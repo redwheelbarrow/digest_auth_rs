@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 use std::result;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Error {
     BadCharset(String),
     UnknownAlgorithm(String),

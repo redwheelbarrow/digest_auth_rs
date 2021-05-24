@@ -1,6 +1,6 @@
 [package]
 name = "digest_auth"
-version = "0.2.4"
+version = "0.3.0"
 authors = ["Ondřej Hruška <ondra@ondrovo.com>"]
 edition = "2018"
 description = "Implementation of the Digest Auth algorithm as defined in IETF RFC 2069, 2617, and 7616, intended for HTTP clients"
@@ -20,3 +20,10 @@ hex = "0.4"
 sha2 = "0.9"
 md-5 = "0.9"
 digest = "0.9"
+
+[dependencies.http]
+version = "0.2.4"
+optional = true
+
+[features]
+default = []
