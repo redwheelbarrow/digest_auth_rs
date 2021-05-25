@@ -1,9 +1,9 @@
 # 0.3.0
 
 - Added lifetime parameter to `HttpMethod`
-- Changed `HttpMethod::OTHER(&'static str)` to `HttpMethod::OTHER(Cow<'a, str>)`
+- Changed `HttpMethod` to `HttpMethod<'a>(Cow<'a, str>)`
 - Added unit tests
-- Converted one Into impl to From
+- Added support for the `http` crate's `Method` struct (optional feature)
 
 # 0.2.4
 

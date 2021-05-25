@@ -170,11 +170,19 @@ impl Display for Charset {
 
 /// HTTP method (used when generating the response hash for some Qop options)
 #[derive(Debug, PartialEq, Clone)]
-pub enum HttpMethod<'a> {
-    GET,
-    POST,
-    HEAD,
-    OTHER(Cow<'a, str>),
+pub struct HttpMethod<'a>(pub Cow<'a, str>);
+
+// Well-known methods are provided as convenient associated constants
+impl<'a> HttpMethod<'a> {
+    pub const GET : Self = HttpMethod(Cow::Borrowed("GET"));
+    pub const POST : Self = HttpMethod(Cow::Borrowed("POST"));
+    pub const PUT : Self = HttpMethod(Cow::Borrowed("PUT"));
+    pub const DELETE : Self = HttpMethod(Cow::Borrowed("DELETE"));
+    pub const HEAD : Self = HttpMethod(Cow::Borrowed("HEAD"));
+    pub const OPTIONS : Self = HttpMethod(Cow::Borrowed("OPTIONS"));
+    pub const CONNECT : Self = HttpMethod(Cow::Borrowed("CONNECT"));
+    pub const PATCH : Self = HttpMethod(Cow::Borrowed("PATCH"));
+    pub const TRACE : Self = HttpMethod(Cow::Borrowed("TRACE"));
 }
 
 impl<'a> Default for HttpMethod<'a> {
@@ -186,63 +194,58 @@ impl<'a> Default for HttpMethod<'a> {
 impl<'a> Display for HttpMethod<'a> {
     /// Convert to uppercase string
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str(match self {
-            HttpMethod::GET => "GET",
-            HttpMethod::POST => "POST",
-            HttpMethod::HEAD => "HEAD",
-            HttpMethod::OTHER(s) => s,
-        })
+        f.write_str(&self.0)
     }
 }
 
 impl<'a> From<&'a str> for HttpMethod<'a> {
     fn from(s: &'a str) -> Self {
-        match s {
-            "GET" => HttpMethod::GET,
-            "POST" => HttpMethod::POST,
-            "HEAD" => HttpMethod::HEAD,
-            s => HttpMethod::OTHER(Cow::Borrowed(s)),
-        }
+        Self(s.into())
     }
 }
 
 impl<'a> From<&'a [u8]> for HttpMethod<'a> {
     fn from(s: &'a [u8]) -> Self {
-        String::from_utf8_lossy(s).into()
+        Self(String::from_utf8_lossy(s).into())
     }
 }
 
 impl<'a> From<String> for HttpMethod<'a> {
     fn from(s: String) -> Self {
-        match &s[..] {
-            "GET" => HttpMethod::GET,
-            "POST" => HttpMethod::POST,
-            "HEAD" => HttpMethod::HEAD,
-            _ => HttpMethod::OTHER(Cow::Owned(s)),
-        }
+        Self(s.into())
     }
 }
 
 impl<'a> From<Cow<'a, str>> for HttpMethod<'a> {
     fn from(s: Cow<'a, str>) -> Self {
-        match &s[..] {
-            "GET" => HttpMethod::GET,
-            "POST" => HttpMethod::POST,
-            "HEAD" => HttpMethod::HEAD,
-            _ => HttpMethod::OTHER(s),
-        }
+        Self(s)
     }
 }
 
 #[cfg(feature = "http")]
 impl From<http::Method> for HttpMethod<'static> {
     fn from(method: http::Method) -> Self {
-        match method {
-            http::Method::GET => HttpMethod::GET,
-            http::Method::POST => HttpMethod::POST,
-            http::Method::HEAD => HttpMethod::HEAD,
-            other => HttpMethod::OTHER(other.to_string().into()),
+        match method.as_str() {
+            // Avoid cloning when possible
+            "GET" => Self::GET,
+            "POST" => Self::POST,
+            "PUT" => Self::PUT,
+            "DELETE" => Self::DELETE,
+            "HEAD" => Self::HEAD,
+            "OPTIONS" => Self::OPTIONS,
+            "CONNECT" => Self::CONNECT,
+            "PATCH" => Self::PATCH,
+            "TRACE" => Self::TRACE,
+            // Clone custom strings. This is inefficient, but the inner string is private
+            other => Self(other.to_owned().into())
         }
+    }
+}
+
+#[cfg(feature = "http")]
+impl<'a> From<&'a http::Method> for HttpMethod<'a> {
+    fn from(method: &'a http::Method) -> HttpMethod<'a> {
+        Self(method.as_str().into())
     }
 }
 
@@ -373,55 +376,75 @@ mod test {
         // Well known 'static
         assert_eq!(HttpMethod::GET, "GET".into());
         assert_eq!(HttpMethod::POST, "POST".into());
+        assert_eq!(HttpMethod::PUT, "PUT".into());
+        assert_eq!(HttpMethod::DELETE, "DELETE".into());
         assert_eq!(HttpMethod::HEAD, "HEAD".into());
+        assert_eq!(HttpMethod::OPTIONS, "OPTIONS".into());
+        assert_eq!(HttpMethod::CONNECT, "CONNECT".into());
+        assert_eq!(HttpMethod::PATCH, "PATCH".into());
+        assert_eq!(HttpMethod::TRACE, "TRACE".into());
         // As bytes
         assert_eq!(HttpMethod::GET, "GET".as_bytes().into());
         assert_eq!(
-            HttpMethod::OTHER(Cow::Borrowed("ěščř")),
+            HttpMethod(Cow::Borrowed("ěščř")),
             "ěščř".as_bytes().into()
         );
         assert_eq!(
-            HttpMethod::OTHER(Cow::Owned("AB�".to_string())),
+            HttpMethod(Cow::Owned("AB�".to_string())), // Lossy conversion
             (&[65u8, 66, 156][..]).into()
         );
         // Well known String
         assert_eq!(HttpMethod::GET, String::from("GET").into());
         // Custom String
         assert_eq!(
-            HttpMethod::OTHER(Cow::Borrowed("NonsenseMethod")),
+            HttpMethod(Cow::Borrowed("NonsenseMethod")),
             "NonsenseMethod".into()
         );
         assert_eq!(
-            HttpMethod::OTHER(Cow::Owned("NonsenseMethod".to_string())),
+            HttpMethod(Cow::Owned("NonsenseMethod".to_string())),
             "NonsenseMethod".to_string().into()
         );
         // Custom Cow
         assert_eq!(HttpMethod::HEAD, Cow::Borrowed("HEAD").into());
         assert_eq!(
-            HttpMethod::OTHER(Cow::Borrowed("NonsenseMethod")),
+            HttpMethod(Cow::Borrowed("NonsenseMethod")),
             Cow::Borrowed("NonsenseMethod").into()
         );
         // to string
         assert_eq!("GET".to_string(), HttpMethod::GET.to_string());
         assert_eq!("POST".to_string(), HttpMethod::POST.to_string());
+        assert_eq!("PUT".to_string(), HttpMethod::PUT.to_string());
+        assert_eq!("DELETE".to_string(), HttpMethod::DELETE.to_string());
         assert_eq!("HEAD".to_string(), HttpMethod::HEAD.to_string());
+        assert_eq!("OPTIONS".to_string(), HttpMethod::OPTIONS.to_string());
+        assert_eq!("CONNECT".to_string(), HttpMethod::CONNECT.to_string());
+        assert_eq!("PATCH".to_string(), HttpMethod::PATCH.to_string());
+        assert_eq!("TRACE".to_string(), HttpMethod::TRACE.to_string());
+
         assert_eq!(
             "NonsenseMethod".to_string(),
-            HttpMethod::OTHER(Cow::Borrowed("NonsenseMethod")).to_string()
+            HttpMethod(Cow::Borrowed("NonsenseMethod")).to_string()
         );
         assert_eq!(
             "NonsenseMethod".to_string(),
-            HttpMethod::OTHER(Cow::Owned("NonsenseMethod".to_string())).to_string()
+            HttpMethod(Cow::Owned("NonsenseMethod".to_string())).to_string()
         );
     }
 
     #[cfg(feature = "http")]
     #[test]
     fn test_http_crate() {
-        assert_eq!(HttpMethod::GET, http::Method::GET.into());
+        assert_eq!(HttpMethod::GET, http::Method::GET.clone().into());
         assert_eq!(
-            HttpMethod::OTHER(Cow::Owned("BANANA".to_string())),
+            HttpMethod(Cow::Owned("BANANA".to_string())),
             http::Method::from_str("BANANA").unwrap().into()
+        );
+
+        assert_eq!(HttpMethod::GET, (&http::Method::GET).into());
+        let x = http::Method::from_str("BANANA").unwrap();
+        assert_eq!(
+            HttpMethod(Cow::Borrowed("BANANA")),
+            (&x).into()
         );
     }
 }

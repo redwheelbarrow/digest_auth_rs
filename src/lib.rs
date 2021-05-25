@@ -83,7 +83,7 @@ mod test {
         let mut prompt = crate::parse(src).unwrap();
         let answer = prompt.respond(&context).unwrap();
 
-        let str = answer.to_string().replace(", ", ",\n  ");
+        let str = answer.to_string().replace(", ", ",\n  "); // This is only for easier reading
 
         assert_eq!(
             str,
