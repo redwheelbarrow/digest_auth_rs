@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use digest::{Digest, DynDigest};
 use md5::Md5;
-use sha2::{Sha256, Sha512Trunc256};
+use sha2::{Sha256, Sha512_256};
 use std::borrow::Cow;
 
 /// Algorithm type
@@ -37,7 +37,7 @@ impl Algorithm {
         let mut hash: Box<dyn DynDigest> = match self.algo {
             AlgorithmType::MD5 => Box::new(Md5::new()),
             AlgorithmType::SHA2_256 => Box::new(Sha256::new()),
-            AlgorithmType::SHA2_512_256 => Box::new(Sha512Trunc256::new()),
+            AlgorithmType::SHA2_512_256 => Box::new(Sha512_256::new()),
         };
 
         hash.update(bytes);

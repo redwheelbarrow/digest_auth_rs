@@ -17,9 +17,9 @@ license = "MIT"
 [dependencies]
 rand = "0.8"
 hex = "0.4"
-sha2 = "0.9"
-md-5 = "0.9"
-digest = "0.9"
+sha2 = "0.10"
+md-5 = "0.10"
+digest = "0.10"
 
 [dependencies.http]
 version = "0.2.4"
