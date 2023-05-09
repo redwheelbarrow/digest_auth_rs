@@ -1,3 +1,7 @@
+# 0.3.1
+
+- Update deps
+
 # 0.3.0
 
 - Added lifetime parameter to `HttpMethod`
